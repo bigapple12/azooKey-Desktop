@@ -94,6 +94,12 @@ public enum FoundationModelsClient {
         @Guide(description: "The transformed text")
         public var result: String
     }
+
+    @Generable
+    public struct MultiCorrectionResponse: Codable {
+        @Guide(description: "Array of corrected text candidates", .count(1...5))
+        public var results: [String]
+    }
     #endif
 
     public static func sendRequest(_ request: OpenAIRequest, logger: ((String) -> Void)? = nil) async throws -> [String] {
@@ -181,6 +187,44 @@ public enum FoundationModelsClient {
         throw FoundationModelsError.unavailable(.frameworkNotAvailable)
         #endif
     }
+
+    /// 複数候補を返すAI校正リクエスト
+    public static func sendMultiCorrectionRequest(_ prompt: String, candidateCount: Int, logger: ((String) -> Void)? = nil) async throws -> [String] {
+        #if canImport(FoundationModels)
+        logger?("Foundation Models multi-correction request started")
+
+        let systemModel = SystemLanguageModel.default
+
+        switch systemModel.availability {
+        case .available:
+            break
+        case .unavailable(let reason):
+            logger?("Foundation Models not available: \(reason)")
+            let mappedReason: FoundationModelsAvailability.UnavailabilityReason = switch reason {
+            case .deviceNotEligible:
+                .deviceNotEligible
+            case .appleIntelligenceNotEnabled:
+                .appleIntelligenceNotEnabled
+            case .modelNotReady:
+                .modelNotReady
+            @unknown default:
+                .deviceNotEligible
+            }
+            throw FoundationModelsError.unavailable(mappedReason)
+        @unknown default:
+            logger?("Foundation Models availability unknown")
+            throw FoundationModelsError.unavailable(.deviceNotEligible)
+        }
+
+        let session = LanguageModelSession(model: systemModel)
+        let response = try await session.respond(to: prompt, generating: MultiCorrectionResponse.self)
+
+        logger?("Received structured response with \(response.content.results.count) corrections")
+        return Array(response.content.results.prefix(candidateCount).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        #else
+        throw FoundationModelsError.unavailable(.frameworkNotAvailable)
+        #endif
+    }
 }
 
 // Compatibility wrapper for older macOS versions
@@ -204,6 +248,14 @@ public enum FoundationModelsClientCompat {
     public static func sendTextTransformRequest(_ prompt: String, logger: ((String) -> Void)? = nil) async throws -> String {
         if #available(macOS 26.0, *) {
             return try await FoundationModelsClient.sendTextTransformRequest(prompt, logger: logger)
+        } else {
+            throw FoundationModelsError.unavailable(.osVersionTooOld)
+        }
+    }
+
+    public static func sendMultiCorrectionRequest(_ prompt: String, candidateCount: Int, logger: ((String) -> Void)? = nil) async throws -> [String] {
+        if #available(macOS 26.0, *) {
+            return try await FoundationModelsClient.sendMultiCorrectionRequest(prompt, candidateCount: candidateCount, logger: logger)
         } else {
             throw FoundationModelsError.unavailable(.osVersionTooOld)
         }

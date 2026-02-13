@@ -32,4 +32,11 @@ extension Config {
         static let `default` = 5
         public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionMinLength"
     }
+
+    /// AI校正候補数（1〜5）
+    public struct AutoCorrectionCandidateCount: IntConfigItem {
+        public init() {}
+        static let `default` = 1
+        public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionCandidateCount"
+    }
 }

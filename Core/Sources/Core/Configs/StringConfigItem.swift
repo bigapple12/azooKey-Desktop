@@ -65,6 +65,7 @@ extension Config {
         public init() {}
         public static let `default`: String = """
         日本語テキストの誤字脱字・文法を修正してください。
+        日本語IMEが有効な状態で英語を入力した場合（例:「G大gぇ」→「Google」「へっろ」→「hello」）、意図した英語に復元してください。
         修正したテキストのみ返してください。変更不要の場合は元のテキストをそのまま返してください。
         """
         public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionPrompt"

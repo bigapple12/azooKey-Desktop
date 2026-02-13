@@ -10,16 +10,32 @@ class NonClickableTableView: NSTableView {
 
 class CandidateTableCellView: NSTableCellView {
     let candidateTextField: NSTextField
+    let sparkleImageView: NSImageView
 
     override init(frame frameRect: NSRect) {
         self.candidateTextField = NSTextField(labelWithString: "")
         self.candidateTextField.font = NSFont.systemFont(ofSize: 18)
+
+        self.sparkleImageView = NSImageView()
+        if let sparkleImage = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI") {
+            self.sparkleImageView.image = sparkleImage
+        }
+        self.sparkleImageView.isHidden = true
+        self.sparkleImageView.contentTintColor = .systemPurple
+
         super.init(frame: frameRect)
+        self.addSubview(self.sparkleImageView)
         self.addSubview(self.candidateTextField)
 
+        self.sparkleImageView.translatesAutoresizingMaskIntoConstraints = false
         self.candidateTextField.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            self.candidateTextField.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+            self.sparkleImageView.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: 2),
+            self.sparkleImageView.centerYAnchor.constraint(equalTo: self.centerYAnchor),
+            self.sparkleImageView.widthAnchor.constraint(equalToConstant: 16),
+            self.sparkleImageView.heightAnchor.constraint(equalToConstant: 16),
+
+            self.candidateTextField.leadingAnchor.constraint(equalTo: self.sparkleImageView.trailingAnchor, constant: 2),
             self.candidateTextField.trailingAnchor.constraint(equalTo: self.trailingAnchor),
             self.candidateTextField.centerYAnchor.constraint(equalTo: self.centerYAnchor)
         ])
@@ -38,14 +54,23 @@ class CandidateTableCellView: NSTableCellView {
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet {
             candidateTextField.textColor = backgroundStyle == .emphasized ? .white : NSAppearance.currentDrawing().name == .aqua ? .init(white: 0.3, alpha: 1.0) : .textColor
+            sparkleImageView.contentTintColor = backgroundStyle == .emphasized ? .white : .systemPurple
         }
     }
 }
 
 class BaseCandidateViewController: NSViewController {
     internal var candidates: [Candidate] = []
+    internal var aiCandidateIndices: Set<Int> = []
     internal var tableView: NSTableView!
     internal var currentSelectedRow: Int = -1
+
+    // ステータスヘッダー（AIモード表示）
+    internal var statusHeaderView: NSView!
+    internal var modeLabel: NSTextField!
+    internal var loadingSpinner: NSProgressIndicator!
+    internal var statusHeaderHeightConstraint: NSLayoutConstraint!
+    private static let headerHeight: CGFloat = 20
 
     override func loadView() {
         // 親ビュー（ZStackのような役割）
@@ -58,6 +83,44 @@ class BaseCandidateViewController: NSViewController {
         materialView.material = .windowBackground
         materialView.state = .active
         materialView.translatesAutoresizingMaskIntoConstraints = false
+
+        // ステータスヘッダー（AIモード名 + ローディング）
+        let headerView = NSView()
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "")
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isEditable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.backgroundColor = .clear
+        label.lineBreakMode = .byTruncatingTail
+        self.modeLabel = label
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.isHidden = true
+        self.loadingSpinner = spinner
+
+        headerView.addSubview(label)
+        headerView.addSubview(spinner)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 6),
+            label.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: spinner.leadingAnchor, constant: -4),
+
+            spinner.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -6),
+            spinner.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 12),
+            spinner.heightAnchor.constraint(equalToConstant: 12)
+        ])
+
+        self.statusHeaderView = headerView
 
         // Scroll View（前面）
         let scrollView = NSScrollView()
@@ -72,7 +135,11 @@ class BaseCandidateViewController: NSViewController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // 重ね順に応じて subviews を構成（背面 → 前面）
-        containerView.subviews = [materialView, scrollView]
+        containerView.subviews = [materialView, headerView, scrollView]
+
+        // ヘッダー高さ制約（非表示時は0）
+        let headerHeightConstraint = headerView.heightAnchor.constraint(equalToConstant: 0)
+        self.statusHeaderHeightConstraint = headerHeightConstraint
 
         // 制約
         NSLayoutConstraint.activate([
@@ -81,9 +148,14 @@ class BaseCandidateViewController: NSViewController {
             materialView.topAnchor.constraint(equalTo: containerView.topAnchor),
             materialView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
 
+            headerView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            headerView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            headerHeightConstraint,
+
             scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            scrollView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
         ])
 
@@ -131,12 +203,45 @@ class BaseCandidateViewController: NSViewController {
         window.isOpaque = false
     }
 
-    func updateCandidates(_ candidates: [Candidate], selectionIndex: Int?, cursorLocation: CGPoint) {
+    func updateCandidates(
+        _ candidates: [Candidate],
+        selectionIndex: Int?,
+        cursorLocation: CGPoint,
+        aiCandidateIndices: Set<Int> = [],
+        aiPresetName: String? = nil,
+        isAIProcessing: Bool = false
+    ) {
         self.candidates = candidates
+        self.aiCandidateIndices = aiCandidateIndices
+        self.updateStatusHeader(aiPresetName: aiPresetName, isAIProcessing: isAIProcessing)
         self.currentSelectedRow = selectionIndex ?? -1
         self.tableView.reloadData()
         self.resizeWindowToFitContent(cursorLocation: cursorLocation)
         self.updateSelection(to: selectionIndex ?? -1)
+    }
+
+    /// ステータスヘッダーの表示を更新
+    /// aiPresetName が "AI:" で始まらない場合（組み込みモード）はプレフィックスなしで表示
+    internal func updateStatusHeader(aiPresetName: String?, isAIProcessing: Bool) {
+        if let name = aiPresetName {
+            self.statusHeaderHeightConstraint.constant = Self.headerHeight
+            self.statusHeaderView.isHidden = false
+            // 組み込みモード（カタカナ/alphabet）はそのまま、AIプリセットは "AI: " プレフィックス付き
+            let isBuiltIn = (name == "カタカナ" || name == "alphabet")
+            self.modeLabel.stringValue = isBuiltIn ? name : "AI: \(name)"
+            if isAIProcessing {
+                self.loadingSpinner.isHidden = false
+                self.loadingSpinner.startAnimation(nil)
+            } else {
+                self.loadingSpinner.stopAnimation(nil)
+                self.loadingSpinner.isHidden = true
+            }
+        } else {
+            self.statusHeaderHeightConstraint.constant = 0
+            self.statusHeaderView.isHidden = true
+            self.loadingSpinner.stopAnimation(nil)
+            self.loadingSpinner.isHidden = true
+        }
     }
 
     internal func updateSelection(to row: Int) {
@@ -189,7 +294,8 @@ class BaseCandidateViewController: NSViewController {
         }
 
         let rowHeight = self.tableView.rowHeight
-        let tableViewHeight = CGFloat(self.numberOfVisibleRows) * rowHeight
+        let headerHeight = self.statusHeaderHeightConstraint.constant
+        let tableViewHeight = CGFloat(self.numberOfVisibleRows) * rowHeight + headerHeight
 
         let maxWidth = self.getMaxTextWidth(candidates: self.candidates.lazy.map { $0.text })
         let windowWidth = self.getWindowWidth(maxContentWidth: maxWidth)
@@ -229,6 +335,7 @@ class BaseCandidateViewController: NSViewController {
 
     internal func configureCellView(_ cell: CandidateTableCellView, forRow row: Int) {
         cell.candidateTextField.stringValue = candidates[row].text
+        cell.sparkleImageView.isHidden = !aiCandidateIndices.contains(row)
     }
 }
 

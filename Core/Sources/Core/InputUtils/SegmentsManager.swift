@@ -42,6 +42,10 @@ public final class SegmentsManager {
     private var debugCandidates: [Candidate] = []
 
     private var aiCandidates: [Candidate] = []
+    /// AI候補が挿入されたインデックスの集合
+    public private(set) var aiCandidateIndices: Set<Int> = []
+    /// true の場合、AI候補を先頭（index 0）に挿入する（組み込みモード用）
+    public var aiCandidatesFirst: Bool = false
 
     private var replaceSuggestions: [Candidate] = []
     private var suggestSelectionIndex: Int?
@@ -302,19 +306,29 @@ public final class SegmentsManager {
             } else {
                 baseCandidates = rawCandidates.mainResults
             }
-            // AI候補を2番目に挿入（既存候補とtext重複するものは除外）
+            // AI候補を挿入
             if !self.aiCandidates.isEmpty {
+                if self.aiCandidatesFirst {
+                    // 組み込みモード: 重複があっても先頭に挿入し、後方の重複を除去
+                    let aiTexts = self.aiCandidates.mapSet(transform: \.text)
+                    self.aiCandidateIndices = Set(0..<self.aiCandidates.count)
+                    return self.aiCandidates + baseCandidates.filter { !aiTexts.contains($0.text) }
+                }
+                // AIプリセット: 既存候補とtext重複するものは除外し2番目に挿入
                 let existingTexts = baseCandidates.mapSet(transform: \.text)
                 let uniqueAICandidates = self.aiCandidates.filter { !existingTexts.contains($0.text) }
                 if !uniqueAICandidates.isEmpty {
                     var result = baseCandidates
                     let insertIndex = min(1, result.count)
                     result.insert(contentsOf: uniqueAICandidates, at: insertIndex)
+                    self.aiCandidateIndices = Set(insertIndex..<(insertIndex + uniqueAICandidates.count))
                     return result
                 }
             }
+            self.aiCandidateIndices = []
             return baseCandidates
         } else {
+            self.aiCandidateIndices = []
             return nil
         }
     }
@@ -483,7 +497,28 @@ public final class SegmentsManager {
         case .none, .previewing, .replaceSuggestion, .attachDiacritic, .unicodeInput:
             return .hidden
         case .composing:
-            if !self.liveConversionEnabled, let firstCandidate = self.rawCandidates?.mainResults.first {
+            // AI候補がある場合は composing 中でも候補ウィンドウに表示する
+            if !self.aiCandidates.isEmpty {
+                var composingCandidates: [Candidate] = []
+                if !self.liveConversionEnabled, let firstCandidate = self.rawCandidates?.mainResults.first {
+                    composingCandidates.append(firstCandidate)
+                }
+                if self.aiCandidatesFirst {
+                    // 組み込みモード: AI候補を先頭に、重複は後方から除去
+                    let aiTexts = self.aiCandidates.mapSet(transform: \.text)
+                    let filtered = composingCandidates.filter { !aiTexts.contains($0.text) }
+                    let result = self.aiCandidates + filtered
+                    self.aiCandidateIndices = Set(0..<self.aiCandidates.count)
+                    return .composing(result, selectionIndex: 0)
+                } else {
+                    let existingTexts = composingCandidates.mapSet(transform: \.text)
+                    let uniqueAI = self.aiCandidates.filter { !existingTexts.contains($0.text) }
+                    let insertIndex = min(1, composingCandidates.count)
+                    composingCandidates.insert(contentsOf: uniqueAI, at: insertIndex)
+                    self.aiCandidateIndices = Set(insertIndex..<(insertIndex + uniqueAI.count))
+                    return .composing(composingCandidates, selectionIndex: 0)
+                }
+            } else if !self.liveConversionEnabled, let firstCandidate = self.rawCandidates?.mainResults.first {
                 return .composing([firstCandidate], selectionIndex: 0)
             } else {
                 return .hidden
@@ -555,15 +590,43 @@ public final class SegmentsManager {
         )
     }
 
-    @MainActor
-    public func getModifiedRomanCandidate(_ transform: (String) -> String) -> Candidate {
-        let inputString = String(self.composingText.input.compactMap {
+    /// composingText.input から生のローマ字テキストを抽出する
+    public func getRomanText() -> String {
+        String(self.composingText.input.compactMap {
             switch $0.piece {
             case .compositionSeparator: nil
             case .character(let c): c
             case .key(intention: _, input: let input, modifiers: _): input
             }
         })
+    }
+
+    /// composingText.input からローマ字テキストをcompositionSeparator区切りで分割して返す
+    public func getRomanTextSegments() -> [String] {
+        var segments: [String] = []
+        var current = ""
+        for element in self.composingText.input {
+            switch element.piece {
+            case .compositionSeparator:
+                if !current.isEmpty {
+                    segments.append(current)
+                    current = ""
+                }
+            case .character(let c):
+                current.append(c)
+            case .key(intention: _, input: let input, modifiers: _):
+                current.append(input)
+            }
+        }
+        if !current.isEmpty {
+            segments.append(current)
+        }
+        return segments
+    }
+
+    @MainActor
+    public func getModifiedRomanCandidate(_ transform: (String) -> String) -> Candidate {
+        let inputString = self.getRomanText()
         let candidateText = transform(inputString)
         let candidate = Candidate(
             text: candidateText,

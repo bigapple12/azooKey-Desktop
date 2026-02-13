@@ -3,6 +3,11 @@ import Core
 import InputMethodKit
 import KanaKanjiConverterModuleWithDefaultDictionary
 
+enum BuiltInConversionMode: String {
+    case katakana = "カタカナ"
+    case alphabet = "alphabet"
+}
+
 @objc(azooKeyMacInputController)
 class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // swiftlint:disable:this type_name
     var segmentsManager: SegmentsManager
@@ -33,6 +38,28 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
 
     // AI校正用プロパティ
     var pendingCorrectionTask: Task<Void, Never>?
+    var isAICorrectionInProgress: Bool = false
+
+    // 組み込み変換モード（nil = AIプリセットモード）
+    var activeBuiltInMode: BuiltInConversionMode?
+
+    /// 組み込みモード時は変換結果を、それ以外は通常の commitMarkedText を返す
+    @MainActor
+    func commitText() -> String {
+        if let mode = self.activeBuiltInMode {
+            let convertTarget = self.segmentsManager.convertTarget
+            let text: String
+            switch mode {
+            case .katakana:
+                text = convertTarget.toKatakana()
+            case .alphabet:
+                text = self.segmentsManager.getRomanText()
+            }
+            self.segmentsManager.stopComposition()
+            return text
+        }
+        return self.segmentsManager.commitMarkedText(inputState: self.inputState)
+    }
 
     // ダブルタップ検出用
     private var lastKey: (time: TimeInterval, code: UInt16) = (0, 0)
@@ -166,7 +193,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         }
         self.pendingCorrectionTask?.cancel()
         self.pendingCorrectionTask = nil
-        let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
+        self.isAICorrectionInProgress = false
+        let text = self.commitText()
         if let client = sender as? IMKTextInput {
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         }
@@ -270,6 +298,31 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             }
         }
 
+        // Control+E: AIプリセット切替（変換中のみ。未変換時はアプリに通す）
+        do {
+            let cleanFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.keyCode == 14 {
+                NSLog("[azooKey] E key: isEmpty=%d ctrl=%d cmd=%d opt=%d shift=%d flags=0x%lx",
+                      self.segmentsManager.isEmpty ? 0 : 1,
+                      cleanFlags.contains(.control) ? 1 : 0,
+                      cleanFlags.contains(.command) ? 1 : 0,
+                      cleanFlags.contains(.option) ? 1 : 0,
+                      cleanFlags.contains(.shift) ? 1 : 0,
+                      cleanFlags.rawValue)
+            }
+            if !self.segmentsManager.isEmpty,
+               event.keyCode == 14,  // E key
+               cleanFlags.contains(.control),
+               !cleanFlags.contains(.command),
+               !cleanFlags.contains(.option),
+               !cleanFlags.contains(.shift) {
+                NSLog("[azooKey] Ctrl+E: cycling preset")
+                self.segmentsManager.appendDebugMessage("Control+E 検出: プリセット切替")
+                self.cycleAIPreset()
+                return true
+            }
+        }
+
         // Check if AI backend is enabled
         let aiBackendEnabled = Config.AIBackendPreference().value != .off
 
@@ -359,16 +412,16 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .editSegment(let count):
             self.segmentsManager.editSegment(count: count)
         case .commitMarkedText:
-            let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
+            let text = self.commitText()
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
         case .commitMarkedTextAndAppendToMarkedText(let string):
-            let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
+            let text = self.commitText()
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(string, inputStyle: inputStyle)
         case .commitMarkedTextAndAppendPieceToMarkedText(let pieces):
-            let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
+            let text = self.commitText()
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
@@ -419,7 +472,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .selectInputLanguage(let language):
             self.switchInputLanguage(language, client: client)
         case .commitMarkedTextAndSelectInputLanguage(let language):
-            let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
+            let text = self.commitText()
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             self.switchInputLanguage(language, client: client)
         // PredictiveSuggestion
@@ -518,18 +571,40 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     }
 
     func refreshCandidateWindow() {
-        switch self.segmentsManager.getCurrentCandidateWindow(inputState: self.inputState) {
+        let candidateWindow = self.segmentsManager.getCurrentCandidateWindow(inputState: self.inputState)
+        // getCurrentCandidateWindow 内で aiCandidateIndices が更新されるため、呼出後に取得
+        let aiIndices = self.segmentsManager.aiCandidateIndices
+
+        // モード名を取得（組み込みモード優先、AI OFF時はnil）
+        let aiPresetName: String? = {
+            // 組み込みモードが優先
+            if let builtIn = self.activeBuiltInMode {
+                return builtIn.rawValue  // "カタカナ" or "alphabet"（AI: プレフィックスなし）
+            }
+            // AIプリセット
+            let mode = Config.AutoCorrectionMode().value
+            let backend = Config.AIBackendPreference().value
+            guard mode != .off, backend != .off else { return nil }
+            let presets = Config.AutoCorrectionPromptPresets().value
+            if let id = presets.activePresetId,
+               let preset = presets.presets.first(where: { $0.id == id }) {
+                return preset.name
+            }
+            return presets.presets.first?.name
+        }()
+
+        switch candidateWindow {
         case .selecting(let candidates, let selectionIndex):
             var rect: NSRect = .zero
             self.client().attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
             self.candidatesViewController.showCandidateIndex = true
-            self.candidatesViewController.updateCandidates(candidates, selectionIndex: selectionIndex, cursorLocation: rect.origin)
+            self.candidatesViewController.updateCandidates(candidates, selectionIndex: selectionIndex, cursorLocation: rect.origin, aiCandidateIndices: aiIndices, aiPresetName: aiPresetName, isAIProcessing: self.isAICorrectionInProgress)
             self.candidatesWindow.orderFront(nil)
         case .composing(let candidates, let selectionIndex):
             var rect: NSRect = .zero
             self.client().attributes(forCharacterIndex: 0, lineHeightRectangle: &rect)
             self.candidatesViewController.showCandidateIndex = false
-            self.candidatesViewController.updateCandidates(candidates, selectionIndex: selectionIndex, cursorLocation: rect.origin)
+            self.candidatesViewController.updateCandidates(candidates, selectionIndex: selectionIndex, cursorLocation: rect.origin, aiCandidateIndices: aiIndices, aiPresetName: aiPresetName, isAIProcessing: self.isAICorrectionInProgress)
             self.candidatesWindow.orderFront(nil)
         case .hidden:
             self.candidatesWindow.setIsVisible(false)
@@ -697,19 +772,53 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         ) as? [NSAttributedString.Key: Any]
         let text = NSMutableAttributedString(string: "")
         let currentMarkedText = self.segmentsManager.getCurrentMarkedText(inputState: self.inputState)
-        for part in currentMarkedText where !part.content.isEmpty {
-            let attributes: [NSAttributedString.Key: Any]? = switch part.focus {
-            case .focused: highlight
-            case .unfocused: underline
-            case .none: [:]
+
+        // 組み込みモード時: marked textを変換後テキストでインライン表示（Google日本語入力風）
+        let builtInInlineText: String? = {
+            guard let mode = self.activeBuiltInMode, self.inputState == .composing else { return nil }
+            let convertTarget = self.segmentsManager.convertTarget
+            guard !convertTarget.isEmpty else { return nil }
+            switch mode {
+            case .katakana:
+                let cleanTarget = convertTarget.prefix(while: { !$0.isASCII })
+                let trailing = String(convertTarget[cleanTarget.endIndex...])
+                return String(cleanTarget).toKatakana() + trailing
+            case .alphabet:
+                return self.segmentsManager.getRomanText()
             }
+        }()
+
+        if let builtInInlineText {
+            text.append(NSAttributedString(string: builtInInlineText, attributes: [:]))
+        } else {
+            for part in currentMarkedText where !part.content.isEmpty {
+                let attributes: [NSAttributedString.Key: Any]? = switch part.focus {
+                case .focused: highlight
+                case .unfocused: underline
+                case .none: [:]
+                }
+                text.append(
+                    NSAttributedString(
+                        string: part.content,
+                        attributes: attributes
+                    )
+                )
+            }
+        }
+
+        // AI処理中インジケーター（⏳をグレー・小フォントで追加）
+        if self.isAICorrectionInProgress && text.length > 0 {
             text.append(
                 NSAttributedString(
-                    string: part.content,
-                    attributes: attributes
+                    string: " \u{23F3}",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 10),
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ]
                 )
             )
         }
+
         self.client()?.setMarkedText(
             text,
             selectionRange: currentMarkedText.selectionRange,
@@ -738,6 +847,74 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
                 self.requestImmediateAICorrection()
             }
         }
+    }
+
+    /// Control+E でAIプリセット+組み込みモードをハイブリッドサイクルで循環切替する
+    /// サイクル: [AIプリセット0, AIプリセット1, ..., カタカナ, alphabet] → 先頭に戻る
+    @MainActor
+    func cycleAIPreset() {
+        let presetsConfig = Config.AutoCorrectionPromptPresets().value
+        let builtInModes: [BuiltInConversionMode] = [.katakana, .alphabet]
+        let totalCount = presetsConfig.presets.count + builtInModes.count
+        NSLog("[azooKey] cycleAIPreset: presets=%d builtIn=%d total=%d", presetsConfig.presets.count, builtInModes.count, totalCount)
+
+        guard totalCount > 1 else {
+            NSLog("[azooKey] cycleAIPreset: SKIP - only 1 entry")
+            self.segmentsManager.appendDebugMessage("モード切替: 切替不可（エントリが1つのみ）")
+            return
+        }
+
+        // 現在位置を特定
+        let currentIndex: Int
+        if let builtIn = self.activeBuiltInMode {
+            // 組み込みモードがアクティブ
+            if let idx = builtInModes.firstIndex(of: builtIn) {
+                currentIndex = presetsConfig.presets.count + idx
+            } else {
+                currentIndex = presetsConfig.presets.count
+            }
+        } else if let activeId = presetsConfig.activePresetId,
+                  let idx = presetsConfig.presets.firstIndex(where: { $0.id == activeId }) {
+            currentIndex = idx
+        } else {
+            currentIndex = 0
+        }
+
+        let nextIndex = (currentIndex + 1) % totalCount
+
+        // 前回のAI校正タスクをキャンセル
+        self.pendingCorrectionTask?.cancel()
+        self.pendingCorrectionTask = nil
+        self.segmentsManager.setAICandidates([])
+
+        if nextIndex < presetsConfig.presets.count {
+            // AIプリセット
+            self.activeBuiltInMode = nil
+            self.segmentsManager.aiCandidatesFirst = false
+            var updatedConfig = presetsConfig
+            updatedConfig.activePresetId = presetsConfig.presets[nextIndex].id
+            Config.AutoCorrectionPromptPresets().value = updatedConfig
+
+            let presetName = presetsConfig.presets[nextIndex].name
+            NSLog("[azooKey] cycleAIPreset: switched to AI preset '%@' (index %d)", presetName, nextIndex)
+            self.segmentsManager.appendDebugMessage("モード切替: AI: \(presetName)")
+
+            self.isAICorrectionInProgress = false
+            self.requestImmediateAICorrection()
+        } else {
+            // 組み込みモード
+            let builtInIndex = nextIndex - presetsConfig.presets.count
+            let mode = builtInModes[builtInIndex]
+            self.activeBuiltInMode = mode
+            self.isAICorrectionInProgress = false
+
+            NSLog("[azooKey] cycleAIPreset: switched to built-in '%@'", mode.rawValue)
+            self.segmentsManager.appendDebugMessage("モード切替: \(mode.rawValue)")
+
+            self.applyBuiltInConversion()
+        }
+
+        self.refreshCandidateWindow()
     }
 }
 

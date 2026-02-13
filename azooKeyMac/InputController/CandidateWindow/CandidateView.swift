@@ -11,9 +11,16 @@ class CandidatesViewController: BaseCandidateViewController {
     private var showedRows: ClosedRange = 0...8
     var showCandidateIndex = false
 
-    override func updateCandidates(_ candidates: [Candidate], selectionIndex: Int?, cursorLocation: CGPoint) {
+    override func updateCandidates(
+        _ candidates: [Candidate],
+        selectionIndex: Int?,
+        cursorLocation: CGPoint,
+        aiCandidateIndices: Set<Int> = [],
+        aiPresetName: String? = nil,
+        isAIProcessing: Bool = false
+    ) {
         self.showedRows = selectionIndex == nil ? 0...8 : self.showedRows
-        super.updateCandidates(candidates, selectionIndex: selectionIndex, cursorLocation: cursorLocation)
+        super.updateCandidates(candidates, selectionIndex: selectionIndex, cursorLocation: cursorLocation, aiCandidateIndices: aiCandidateIndices, aiPresetName: aiPresetName, isAIProcessing: isAIProcessing)
     }
 
     override internal func updateSelectionCallback(_ row: Int) {
@@ -43,19 +50,10 @@ class CandidatesViewController: BaseCandidateViewController {
             displayText = self.candidates[row].text // showedRowsの範囲外では番号を付けない
         }
 
-        // 数字部分と候補部分を別々に設定
-        let attributedString = NSMutableAttributedString(string: displayText)
-        let numberRange = (displayText as NSString).range(of: "\(displayIndex).")
-
-        if numberRange.location != NSNotFound {
-            attributedString.addAttributes([
-                .font: NSFont.monospacedSystemFont(ofSize: 8, weight: .regular),
-                .foregroundColor: currentSelectedRow == row ? NSColor.white : NSColor.gray,
-                .baselineOffset: 2
-            ], range: numberRange)
-        }
-
-        cell.candidateTextField.attributedStringValue = attributedString
+        // stringValue で候補テキストを設定（attributedStringValue のレンダリング問題を回避）
+        cell.candidateTextField.stringValue = displayText
+        cell.candidateTextField.font = NSFont.systemFont(ofSize: 18)
+        cell.sparkleImageView.isHidden = !aiCandidateIndices.contains(row)
     }
 
     func getNumberCandidate(num: Int) -> Int {
@@ -73,10 +71,12 @@ class CandidatesViewController: BaseCandidateViewController {
     }
 
     override func getWindowWidth(maxContentWidth: CGFloat) -> CGFloat {
+        // sparkleアイコン領域(20px) + テキスト + 右マージン
         if self.showCandidateIndex {
-            maxContentWidth + 48
+            // 番号プレフィックス "9. " (18pt) ≈ 36px + sparkle(20px) + 右マージン
+            maxContentWidth + 76
         } else {
-            maxContentWidth + 20
+            maxContentWidth + 44
         }
     }
 }

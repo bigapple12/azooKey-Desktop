@@ -217,6 +217,96 @@ extension Config {
         public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.keyboard_layout"
     }
 
+    /// プロンプトプリセット
+    public struct PromptPreset: Sendable, Codable, Identifiable, Equatable {
+        public init(id: UUID = UUID(), name: String, prompt: String) {
+            self.id = id
+            self.name = name
+            self.prompt = prompt
+        }
+        public var id: UUID
+        public var name: String
+        public var prompt: String
+    }
+
+    /// AI校正プロンプトプリセット管理
+    public struct AutoCorrectionPromptPresets: ConfigItem {
+        public typealias Value = PresetsValue
+
+        public struct PresetsValue: Codable, Sendable {
+            public var presets: [PromptPreset]
+            public var activePresetId: UUID?
+
+            public init(presets: [PromptPreset], activePresetId: UUID? = nil) {
+                self.presets = presets
+                self.activePresetId = activePresetId
+            }
+
+            public var activePrompt: String {
+                if let id = activePresetId,
+                   let preset = presets.first(where: { $0.id == id }) {
+                    return preset.prompt
+                }
+                return presets.first?.prompt ?? AutoCorrectionPrompt.default
+            }
+        }
+        public init() {}
+        public static let englishTranslationPrompt: String = """
+        入力された日本語テキストを自然な英語に翻訳してください。
+        翻訳結果のみ返してください。
+        """
+
+        public static let `default`: PresetsValue = .init(
+            presets: [
+                PromptPreset(name: "誤字修正", prompt: AutoCorrectionPrompt.default),
+                PromptPreset(name: "英語翻訳", prompt: englishTranslationPrompt)
+            ],
+            activePresetId: nil
+        )
+        public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionPromptPresets"
+
+        public var value: PresetsValue {
+            get {
+                guard let data = UserDefaults.standard.data(forKey: Self.key) else {
+                    // 初回: 旧 AutoCorrectionPrompt からの移行を試みる
+                    let legacyKey = Config.AutoCorrectionPrompt.key
+                    let legacyPrompt = UserDefaults.standard.string(forKey: legacyKey) ?? ""
+                    let prompt = legacyPrompt.isEmpty ? AutoCorrectionPrompt.default : legacyPrompt
+                    let migrated = PresetsValue(presets: [
+                        PromptPreset(name: "誤字修正", prompt: prompt),
+                        PromptPreset(name: "英語翻訳", prompt: Self.englishTranslationPrompt)
+                    ])
+                    // 移行結果を保存
+                    if let encoded = try? JSONEncoder().encode(migrated) {
+                        UserDefaults.standard.set(encoded, forKey: Self.key)
+                    }
+                    return migrated
+                }
+                do {
+                    var decoded = try JSONDecoder().decode(PresetsValue.self, from: data)
+                    // 移行: 英語翻訳プリセットが無ければ追加
+                    if !decoded.presets.contains(where: { $0.name == "英語翻訳" }) {
+                        decoded.presets.append(PromptPreset(name: "英語翻訳", prompt: Self.englishTranslationPrompt))
+                        if let encoded = try? JSONEncoder().encode(decoded) {
+                            UserDefaults.standard.set(encoded, forKey: Self.key)
+                        }
+                    }
+                    return decoded
+                } catch {
+                    return Self.default
+                }
+            }
+            nonmutating set {
+                do {
+                    let encoded = try JSONEncoder().encode(newValue)
+                    UserDefaults.standard.set(encoded, forKey: Self.key)
+                } catch {
+                    print(#file, #line, error)
+                }
+            }
+        }
+    }
+
     public struct AIBackendPreference: CustomCodableConfigItem {
         public enum Value: String, Codable, Equatable, Hashable, Sendable {
             case off = "Off"

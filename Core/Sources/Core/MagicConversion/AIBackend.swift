@@ -53,4 +53,28 @@ public enum AIClient {
             )
         }
     }
+
+    /// 複数候補を返すAI校正リクエスト
+    public static func sendMultiCorrectionRequest(
+        _ prompt: String,
+        candidateCount: Int,
+        backend: AIBackend,
+        modelName: String = "",
+        apiKey: String = "",
+        apiEndpoint: String = "",
+        logger: ((String) -> Void)? = nil
+    ) async throws -> [String] {
+        switch backend {
+        case .foundationModels:
+            return try await FoundationModelsClientCompat.sendMultiCorrectionRequest(prompt, candidateCount: candidateCount, logger: logger)
+        case .openAI:
+            return try await OpenAIClient.sendMultiCorrectionRequest(
+                prompt: prompt,
+                candidateCount: candidateCount,
+                modelName: modelName,
+                apiKey: apiKey,
+                apiEndpoint: apiEndpoint
+            )
+        }
+    }
 }

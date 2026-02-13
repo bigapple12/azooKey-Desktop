@@ -419,6 +419,77 @@ public enum OpenAIClient {
 
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// 複数候補を返すAI校正リクエスト
+    public static func sendMultiCorrectionRequest(prompt: String, candidateCount: Int, modelName: String, apiKey: String, apiEndpoint: String) async throws -> [String] {
+        guard let url = URL(string: apiEndpoint) else {
+            throw OpenAIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "model": modelName,
+            "messages": [
+                ["role": "system", "content": "You are a helpful assistant that transforms text according to user instructions. Return the results as a JSON object with a 'results' field containing an array of corrected text candidates."],
+                ["role": "user", "content": prompt]
+            ],
+            "response_format": [
+                "type": "json_schema",
+                "json_schema": [
+                    "name": "multi_correction_response",
+                    "strict": true,
+                    "schema": [
+                        "type": "object",
+                        "properties": [
+                            "results": [
+                                "type": "array",
+                                "items": [
+                                    "type": "string"
+                                ],
+                                "description": "Array of corrected text candidates"
+                            ]
+                        ],
+                        "required": ["results"],
+                        "additionalProperties": false
+                    ] as [String: Any]
+                ] as [String: Any]
+            ] as [String: Any]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenAIError.noServerResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let responseBody = String(bytes: data, encoding: .utf8) ?? "Body is not encoded in UTF-8"
+            throw OpenAIError.invalidResponseStatus(code: httpResponse.statusCode, body: responseBody)
+        }
+
+        let jsonObject = try JSONSerialization.jsonObject(with: data)
+        guard let jsonDict = jsonObject as? [String: Any],
+              let choices = jsonDict["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let contentString = message["content"] as? String else {
+            throw OpenAIError.invalidResponseStructure(jsonObject)
+        }
+
+        guard let contentData = contentString.data(using: .utf8),
+              let parsedContent = try JSONSerialization.jsonObject(with: contentData) as? [String: Any],
+              let results = parsedContent["results"] as? [String] else {
+            throw OpenAIError.parseError("Failed to parse multi-correction response")
+        }
+
+        return results.prefix(candidateCount).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
 }
 
 private enum ErrorUnion: Error {

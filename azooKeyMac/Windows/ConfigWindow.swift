@@ -24,7 +24,6 @@ struct ConfigWindow: View {
     @ConfigState private var autoCorrectionMode = Config.AutoCorrectionMode()
     @ConfigState private var autoCorrectionPrompt = Config.AutoCorrectionPrompt()
     @ConfigState private var autoCorrectionMinLength = Config.AutoCorrectionMinLength()
-
     @State private var selectedTab: Tab = .basic
     @State private var zenzaiProfileHelpPopover = false
     @State private var zenzaiInferenceLimitHelpPopover = false
@@ -264,6 +263,7 @@ struct ConfigWindow: View {
                                !availability.isAvailable {
                                 aiBackend.value = .off
                             }
+
                         }
                     }
                     .onChange(of: aiBackend.value) { _ in
@@ -313,9 +313,7 @@ struct ConfigWindow: View {
                 .disabled(aiBackend.value == .off)
 
                 if autoCorrectionMode.value != .off {
-                    TextField("校正プロンプト", text: $autoCorrectionPrompt, axis: .vertical)
-                        .lineLimit(3...5)
-                    Stepper("最小文字数: \(autoCorrectionMinLength.value)", value: $autoCorrectionMinLength, in: 1...50)
+                    AutoCorrectionSettingsView()
                 }
             } header: {
                 Label("いい感じ変換", systemImage: "sparkles")
@@ -554,6 +552,81 @@ struct ConfigWindow: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+}
+
+// MARK: - AI校正設定（型推論の複雑さ回避のため独立構造体に分離）
+struct AutoCorrectionSettingsView: View {
+    @ConfigState private var promptPresets = Config.AutoCorrectionPromptPresets()
+    @ConfigState private var candidateCount = Config.AutoCorrectionCandidateCount()
+    @ConfigState private var minLength = Config.AutoCorrectionMinLength()
+    @ConfigState private var oldPrompt = Config.AutoCorrectionPrompt()
+
+    @State private var selectedPresetId: UUID?
+
+    var body: some View {
+        let activeId = selectedPresetId ?? promptPresets.value.activePresetId ?? promptPresets.value.presets.first?.id
+
+        Group {
+            Picker("プリセット", selection: Binding(
+                get: { activeId },
+                set: { (newId: UUID?) in
+                    self.selectedPresetId = newId
+                    self.promptPresets.value.activePresetId = newId
+                }
+            )) {
+                ForEach(promptPresets.value.presets) { preset in
+                    Text(preset.name).tag(Optional(preset.id))
+                }
+            }
+
+            if let unwrappedId = activeId,
+               let presetIndex = promptPresets.value.presets.firstIndex(where: { $0.id == unwrappedId }) {
+                TextField("プリセット名", text: Binding(
+                    get: { self.promptPresets.value.presets[presetIndex].name },
+                    set: { self.promptPresets.value.presets[presetIndex].name = $0 }
+                ))
+                TextField("校正プロンプト", text: Binding(
+                    get: { self.promptPresets.value.presets[presetIndex].prompt },
+                    set: { self.promptPresets.value.presets[presetIndex].prompt = $0 }
+                ), axis: .vertical)
+                    .lineLimit(3...5)
+            }
+
+            HStack {
+                Button("追加") {
+                    let newPreset = Config.PromptPreset(name: "新規プリセット", prompt: Config.AutoCorrectionPrompt.default)
+                    promptPresets.value.presets.append(newPreset)
+                    selectedPresetId = newPreset.id
+                    promptPresets.value.activePresetId = newPreset.id
+                }
+                Button("削除") {
+                    guard promptPresets.value.presets.count > 1 else { return }
+                    promptPresets.value.presets.removeAll { $0.id == activeId }
+                    let newActiveId = promptPresets.value.presets.first?.id
+                    selectedPresetId = newActiveId
+                    promptPresets.value.activePresetId = newActiveId
+                }
+                .disabled(promptPresets.value.presets.count <= 1)
+            }
+
+            Stepper("AI候補数: \(candidateCount.value)", value: $candidateCount, in: 1...5)
+            Stepper("最小文字数: \(minLength.value)", value: $minLength, in: 1...50)
+        }
+        .onAppear {
+            migrateFromOldPromptIfNeeded()
+            selectedPresetId = promptPresets.value.activePresetId ?? promptPresets.value.presets.first?.id
+        }
+    }
+
+    private func migrateFromOldPromptIfNeeded() {
+        // プリセットが空の場合: 旧プロンプト設定から移行
+        guard promptPresets.value.presets.isEmpty else { return }
+        let oldPromptValue = oldPrompt.value
+        let prompt = oldPromptValue.isEmpty ? Config.AutoCorrectionPrompt.default : oldPromptValue
+        let correctionPreset = Config.PromptPreset(name: "誤字修正", prompt: prompt)
+        let translationPreset = Config.PromptPreset(name: "英語翻訳", prompt: Config.AutoCorrectionPromptPresets.englishTranslationPrompt)
+        promptPresets.value = .init(presets: [correctionPreset, translationPreset], activePresetId: nil)
     }
 }
 
