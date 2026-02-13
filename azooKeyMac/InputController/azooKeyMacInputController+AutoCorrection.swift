@@ -60,9 +60,14 @@ extension azooKeyMacInputController {
 
     /// AI校正リクエストの実行（3秒タイムアウト付き）
     /// 結果を segmentsManager.setAICandidates で渡し、候補ウィンドウを更新する
+    @MainActor
     private func performPreCommitCorrection(text: String) async {
         let aiBackendPref = Config.AIBackendPreference().value
         guard aiBackendPref != .off else { return }
+
+        // 実行時にもminLengthを再判定（デバウンス中にBackspace等で短くなった場合）
+        let minLength = Config.AutoCorrectionMinLength().value
+        guard text.count >= minLength else { return }
 
         let backend: AIBackend
         switch aiBackendPref {
@@ -96,14 +101,14 @@ extension azooKeyMacInputController {
         do {
             // 3秒タイムアウト: TaskGroupでレース
             let corrected = try await withThrowingTaskGroup(of: String.self) { group in
-                group.addTask {
+                group.addTask { @Sendable in
                     try await AIClient.sendTextTransformRequest(
                         fullPrompt,
                         backend: backend,
                         modelName: modelName,
                         apiKey: apiKey,
                         apiEndpoint: endpoint,
-                        logger: { [weak self] message in
+                        logger: { @MainActor [weak self] message in
                             self?.segmentsManager.appendDebugMessage("AICorrection: \(message)")
                         }
                     )
@@ -123,22 +128,20 @@ extension azooKeyMacInputController {
 
             guard !Task.isCancelled else { return }
 
-            await MainActor.run {
-                // stale検出: convertTargetが変わっていたら結果を破棄
-                guard self.segmentsManager.convertTarget == convertTargetBeforeRequest else {
-                    self.segmentsManager.appendDebugMessage("AICorrection: stale検出 - 結果を破棄")
-                    return
-                }
-
-                // 差分ガード
-                guard self.validateCorrection(original: text, corrected: corrected) else {
-                    return
-                }
-
-                self.segmentsManager.appendDebugMessage("AICorrection: 候補追加 '\(corrected)'")
-                self.segmentsManager.setAICandidates([corrected])
-                self.refreshCandidateWindow()
+            // stale検出: convertTargetが変わっていたら結果を破棄
+            guard self.segmentsManager.convertTarget == convertTargetBeforeRequest else {
+                self.segmentsManager.appendDebugMessage("AICorrection: stale検出 - 結果を破棄")
+                return
             }
+
+            // 差分ガード
+            guard self.validateCorrection(original: text, corrected: corrected) else {
+                return
+            }
+
+            self.segmentsManager.appendDebugMessage("AICorrection: 候補追加 '\(corrected)'")
+            self.segmentsManager.setAICandidates([corrected])
+            self.refreshCandidateWindow()
         } catch {
             self.segmentsManager.appendDebugMessage("AICorrection: エラー - \(error.localizedDescription)")
         }

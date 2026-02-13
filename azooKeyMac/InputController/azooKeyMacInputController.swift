@@ -143,6 +143,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
 
     @MainActor
     override func deactivateServer(_ sender: Any!) {
+        self.pendingCorrectionTask?.cancel()
+        self.pendingCorrectionTask = nil
         self.segmentsManager.deactivate()
         self.candidatesWindow.orderOut(nil)
         self.predictionWindow.orderOut(nil)
@@ -162,6 +164,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         if self.segmentsManager.isEmpty {
             return
         }
+        self.pendingCorrectionTask?.cancel()
+        self.pendingCorrectionTask = nil
         let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
         if let client = sender as? IMKTextInput {
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -372,6 +376,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .submitSelectedCandidate:
             self.submitSelectedCandidate()
         case .removeLastMarkedText:
+            self.pendingCorrectionTask?.cancel()
+            self.pendingCorrectionTask = nil
             self.segmentsManager.deleteBackwardFromCursorPosition()
             self.segmentsManager.requestResettingSelection()
         case .selectPrevCandidate:
@@ -727,6 +733,10 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         if let candidate = self.segmentsManager.selectedCandidate {
             self.submitCandidate(candidate)
             self.segmentsManager.requestResettingSelection()
+            // 部分変換後、残りテキストがあればAI校正を再トリガー
+            if !self.segmentsManager.isEmpty {
+                self.requestImmediateAICorrection()
+            }
         }
     }
 }
