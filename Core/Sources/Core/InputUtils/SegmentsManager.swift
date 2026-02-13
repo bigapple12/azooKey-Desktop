@@ -41,6 +41,8 @@ public final class SegmentsManager {
     private var shouldShowDebugCandidateWindow: Bool = false
     private var debugCandidates: [Candidate] = []
 
+    private var aiCandidates: [Candidate] = []
+
     private var replaceSuggestions: [Candidate] = []
     private var suggestSelectionIndex: Int?
 
@@ -167,6 +169,7 @@ public final class SegmentsManager {
         self.kanaKanjiConverter.stopComposition()
         self.kanaKanjiConverter.commitUpdateLearningData()
         self.rawCandidates = nil
+        self.aiCandidates = []
         self.didExperienceSegmentEdition = false
         self.lastOperation = .other
         self.composingText.stopComposition()
@@ -180,6 +183,7 @@ public final class SegmentsManager {
         self.composingText.stopComposition()
         self.kanaKanjiConverter.stopComposition()
         self.rawCandidates = nil
+        self.aiCandidates = []
         self.didExperienceSegmentEdition = false
         self.lastOperation = .other
         self.shouldShowCandidateWindow = false
@@ -285,20 +289,31 @@ public final class SegmentsManager {
 
     private var candidates: [Candidate]? {
         if let rawCandidates {
+            let baseCandidates: [Candidate]
             if !self.didExperienceSegmentEdition {
                 if rawCandidates.firstClauseResults.contains(where: { self.composingText.isWholeComposingText(composingCount: $0.composingCount) }) {
-                    // firstClauseCandidateがmainResultsと同じサイズの場合は、何もしない方が良い
-                    return rawCandidates.mainResults
+                    baseCandidates = rawCandidates.mainResults
                 } else {
-                    // 変換範囲がエディットされていない場合
                     let seenAsFirstClauseResults = rawCandidates.firstClauseResults.mapSet(transform: \.text)
-                    return rawCandidates.firstClauseResults + rawCandidates.mainResults.filter {
+                    baseCandidates = rawCandidates.firstClauseResults + rawCandidates.mainResults.filter {
                         !seenAsFirstClauseResults.contains($0.text)
                     }
                 }
             } else {
-                return rawCandidates.mainResults
+                baseCandidates = rawCandidates.mainResults
             }
+            // AI候補を2番目に挿入（既存候補とtext重複するものは除外）
+            if !self.aiCandidates.isEmpty {
+                let existingTexts = baseCandidates.mapSet(transform: \.text)
+                let uniqueAICandidates = self.aiCandidates.filter { !existingTexts.contains($0.text) }
+                if !uniqueAICandidates.isEmpty {
+                    var result = baseCandidates
+                    let insertIndex = min(1, result.count)
+                    result.insert(contentsOf: uniqueAICandidates, at: insertIndex)
+                    return result
+                }
+            }
+            return baseCandidates
         } else {
             return nil
         }
@@ -336,6 +351,8 @@ public final class SegmentsManager {
     /// - Note:
     ///   This function is executed on the `@MainActor` to ensure UI consistency.
     @MainActor private func updateRawCandidate(requestRichCandidates: Bool = false, forcedLeftSideContext: String? = nil) {
+        // 入力変化で旧AI結果を無効化
+        self.aiCandidates = []
         // 不要
         if composingText.isEmpty {
             self.rawCandidates = nil
@@ -573,6 +590,36 @@ public final class SegmentsManager {
         }
         self.stopComposition()
         return text
+    }
+
+    // MARK: - AI候補
+    public func setAICandidates(_ texts: [String]) {
+        let composingCount = ComposingCount.inputCount(self.composingText.input.count)
+        self.aiCandidates = texts.map { text in
+            Candidate(
+                text: text,
+                value: 0,
+                composingCount: composingCount,
+                lastMid: 0,
+                data: [],
+                actions: [],
+                inputable: true
+            )
+        }
+    }
+
+    public func clearAICandidates() {
+        self.aiCandidates = []
+    }
+
+    /// ライブ変換の第1候補テキストを返す
+    public var liveConversionText: String? {
+        guard self.liveConversionEnabled,
+              self.composingText.convertTarget.count > 1,
+              let firstCandidate = self.rawCandidates?.mainResults.first else {
+            return nil
+        }
+        return firstCandidate.text
     }
 
     // サジェスト候補を設定するメソッド

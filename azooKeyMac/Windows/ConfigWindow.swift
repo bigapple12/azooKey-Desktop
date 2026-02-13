@@ -21,6 +21,9 @@ struct ConfigWindow: View {
     @ConfigState private var systemUserDictionary = Config.SystemUserDictionary()
     @ConfigState private var keyboardLayout = Config.KeyboardLayout()
     @ConfigState private var aiBackend = Config.AIBackendPreference()
+    @ConfigState private var autoCorrectionMode = Config.AutoCorrectionMode()
+    @ConfigState private var autoCorrectionPrompt = Config.AutoCorrectionPrompt()
+    @ConfigState private var autoCorrectionMinLength = Config.AutoCorrectionMinLength()
 
     @State private var selectedTab: Tab = .basic
     @State private var zenzaiProfileHelpPopover = false
@@ -301,6 +304,18 @@ struct ConfigWindow: View {
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                }
+
+                Picker("AI校正候補", selection: $autoCorrectionMode) {
+                    Text("オフ").tag(Config.AutoCorrectionMode.Value.off)
+                    Text("有効").tag(Config.AutoCorrectionMode.Value.auto)
+                }
+                .disabled(aiBackend.value == .off)
+
+                if autoCorrectionMode.value != .off {
+                    TextField("校正プロンプト", text: $autoCorrectionPrompt, axis: .vertical)
+                        .lineLimit(3...5)
+                    Stepper("最小文字数: \(autoCorrectionMinLength.value)", value: $autoCorrectionMinLength, in: 1...50)
                 }
             } header: {
                 Label("いい感じ変換", systemImage: "sparkles")

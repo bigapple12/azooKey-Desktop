@@ -6,7 +6,7 @@ import KanaKanjiConverterModuleWithDefaultDictionary
 @objc(azooKeyMacInputController)
 class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // swiftlint:disable:this type_name
     var segmentsManager: SegmentsManager
-    private(set) var inputState: InputState = .none
+    var inputState: InputState = .none
     private var inputLanguage: InputLanguage = .japanese
     var liveConversionEnabled: Bool {
         Config.LiveConversion().value
@@ -25,11 +25,14 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     private var lastPredictionUpdateTime: TimeInterval = 0
     private var predictionHideWorkItem: DispatchWorkItem?
 
-    private var replaceSuggestionWindow: NSWindow
-    private var replaceSuggestionsViewController: ReplaceSuggestionsViewController
+    var replaceSuggestionWindow: NSWindow
+    var replaceSuggestionsViewController: ReplaceSuggestionsViewController
 
     var promptInputWindow: PromptInputWindow
     var isPromptWindowVisible: Bool = false
+
+    // AI校正用プロパティ
+    var pendingCorrectionTask: Task<Void, Never>?
 
     // ダブルタップ検出用
     private var lastKey: (time: TimeInterval, code: UInt16) = (0, 0)
@@ -336,14 +339,17 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .enterCandidateSelectionMode:
             self.segmentsManager.insertCompositionSeparator(inputStyle: self.inputStyle, skipUpdate: true)
             self.segmentsManager.update(requestRichCandidates: true)
+            self.requestImmediateAICorrection()
         case .appendToMarkedText(let string):
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(string, inputStyle: inputStyle)
+            self.triggerPreCommitAICorrection()
         case .appendPieceToMarkedText(let pieces):
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(pieces: pieces, inputStyle: inputStyle)
+            self.triggerPreCommitAICorrection()
         case .insertWithoutMarkedText(let string):
             client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
         case .editSegment(let count):
@@ -498,10 +504,10 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         client.overrideKeyboard(withKeyboardNamed: Config.KeyboardLayout().value.layoutIdentifier)
         switch language {
         case .english:
-            client.selectMode("dev.ensan.inputmethod.azooKeyMac.Roman")
+            client.selectMode("dev.bigapple12.inputmethod.azooKeyMac.Roman")
             self.segmentsManager.stopJapaneseInput()
         case .japanese:
-            client.selectMode("dev.ensan.inputmethod.azooKeyMac.Japanese")
+            client.selectMode("dev.bigapple12.inputmethod.azooKeyMac.Japanese")
         }
     }
 
@@ -760,7 +766,6 @@ extension azooKeyMacInputController: ReplaceSuggestionsViewControllerDelegate {
         Task { @MainActor in
             if let candidate = self.replaceSuggestionsViewController.getSelectedCandidate() {
                 if let client = self.client() {
-                    // 選択された候補をテキストとして挿入
                     client.insertText(candidate.text, replacementRange: NSRange(location: NSNotFound, length: 0))
                     // サジェスト候補ウィンドウを非表示にする
                     self.replaceSuggestionWindow.setIsVisible(false)

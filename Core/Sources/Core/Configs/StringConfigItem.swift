@@ -59,4 +59,24 @@ extension Config {
     struct PromptHistory: StringConfigItem {
         static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.PromptHistory"
     }
+
+    /// 自動校正用システムプロンプト
+    public struct AutoCorrectionPrompt: StringConfigItem {
+        public init() {}
+        public static let `default`: String = """
+        日本語テキストの誤字脱字・文法を修正してください。
+        修正したテキストのみ返してください。変更不要の場合は元のテキストをそのまま返してください。
+        """
+        public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionPrompt"
+
+        public var value: String {
+            get {
+                let stored = UserDefaults.standard.string(forKey: Self.key) ?? ""
+                return stored.isEmpty ? Self.default : stored
+            }
+            nonmutating set {
+                UserDefaults.standard.set(newValue, forKey: Self.key)
+            }
+        }
+    }
 }

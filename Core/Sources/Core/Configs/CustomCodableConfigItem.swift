@@ -128,6 +128,20 @@ extension Config {
 }
 
 extension Config {
+    /// 確定時AI校正モード
+    public struct AutoCorrectionMode: CustomCodableConfigItem {
+        public enum Value: String, Codable, Equatable, Hashable, Sendable {
+            case off      // 無効
+            case auto     // 自動置換
+            case suggest  // 候補表示して選ばせる
+        }
+        public init() {}
+        public static let `default`: Value = .off
+        public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionMode"
+    }
+}
+
+extension Config {
     /// Zenzaiのパーソナライズ強度
     public struct ZenzaiPersonalizationLevel: CustomCodableConfigItem {
         public enum Value: String, Codable, Equatable, Hashable, Sendable {

@@ -25,4 +25,11 @@ extension Config {
         static let `default` = 5
         public static let key = "dev.ensan.inputmethod.azooKeyMac.preference.zenzaiInferenceLimit"
     }
+
+    /// 自動校正の最小文字数
+    public struct AutoCorrectionMinLength: IntConfigItem {
+        public init() {}
+        static let `default` = 5
+        public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.autoCorrectionMinLength"
+    }
 }
