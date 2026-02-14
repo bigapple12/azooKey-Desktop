@@ -25,6 +25,13 @@ extension azooKeyMacInputController {
             candidates = [String(cleanTarget).toKatakana()]
         case .alphabet:
             candidates = self.generateAlphabetCandidates()
+        case .off:
+            // OFFモード: 通常の第一変換候補を表示
+            if let text = self.segmentsManager.liveConversionText {
+                candidates = [text]
+            } else {
+                candidates = []
+            }
         }
 
         self.segmentsManager.aiCandidatesFirst = true
@@ -175,6 +182,20 @@ extension azooKeyMacInputController {
             return
         }
 
+        // 翻訳プリセット以外で、ASCII比率が高い文字列はスキップ
+        let activePrompt = Config.AutoCorrectionPromptPresets().value.activePrompt
+        let isTranslation = activePrompt.contains("翻訳")
+        if !isTranslation && self.shouldSkipAICorrection(text: text) {
+            NSLog("[azooKey] performPreCommitCorrection: SKIP - high ASCII ratio")
+            return
+        }
+
+        // 同一テキストへの重複リクエストをスキップ
+        if text == self.lastCorrectionInput && !self.segmentsManager.aiCandidateIndices.isEmpty {
+            NSLog("[azooKey] performPreCommitCorrection: SKIP - same input, candidates exist")
+            return
+        }
+
         let backend: AIBackend
         switch aiBackendPref {
         case .foundationModels:
@@ -258,6 +279,7 @@ extension azooKeyMacInputController {
 
                 NSLog("[azooKey] performPreCommitCorrection: adding candidate '%@'", corrected)
                 self.segmentsManager.appendDebugMessage("AICorrection: 候補追加 '\(corrected)'")
+                self.lastCorrectionInput = text
                 self.segmentsManager.setAICandidates([corrected])
                 self.refreshCandidateWindow()
             } else {
@@ -306,6 +328,7 @@ extension azooKeyMacInputController {
 
                 if !validCorrections.isEmpty {
                     self.segmentsManager.appendDebugMessage("AICorrection: \(validCorrections.count)個の候補追加")
+                    self.lastCorrectionInput = text
                     self.segmentsManager.setAICandidates(validCorrections)
                     self.refreshCandidateWindow()
                 }
@@ -341,5 +364,14 @@ extension azooKeyMacInputController {
         }
 
         return true
+    }
+
+    /// ASCII比率が高い文字列（コード/英文）をスキップすべきか判定
+    private func shouldSkipAICorrection(text: String) -> Bool {
+        let asciiCount = text.unicodeScalars.filter { $0.isASCII }.count
+        let totalCount = text.unicodeScalars.count
+        guard totalCount > 0 else { return true }
+        let ratio = Double(asciiCount) / Double(totalCount)
+        return ratio > 0.5
     }
 }

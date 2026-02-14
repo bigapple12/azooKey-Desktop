@@ -6,6 +6,7 @@ import KanaKanjiConverterModuleWithDefaultDictionary
 enum BuiltInConversionMode: String {
     case katakana = "カタカナ"
     case alphabet = "alphabet"
+    case off = "OFF"
 }
 
 @objc(azooKeyMacInputController)
@@ -39,6 +40,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     // AI校正用プロパティ
     var pendingCorrectionTask: Task<Void, Never>?
     var isAICorrectionInProgress: Bool = false
+    var lastCorrectionInput: String?
 
     // 組み込み変換モード（nil = AIプリセットモード）
     var activeBuiltInMode: BuiltInConversionMode?
@@ -46,7 +48,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     /// 組み込みモード時は変換結果を、それ以外は通常の commitMarkedText を返す
     @MainActor
     func commitText() -> String {
-        if let mode = self.activeBuiltInMode {
+        if let mode = self.activeBuiltInMode, mode != .off {
             let convertTarget = self.segmentsManager.convertTarget
             let text: String
             switch mode {
@@ -54,6 +56,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
                 text = convertTarget.toKatakana()
             case .alphabet:
                 text = self.segmentsManager.getRomanText()
+            case .off:
+                fatalError("unreachable")
             }
             self.segmentsManager.stopComposition()
             return text
@@ -172,6 +176,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     override func deactivateServer(_ sender: Any!) {
         self.pendingCorrectionTask?.cancel()
         self.pendingCorrectionTask = nil
+        self.lastCorrectionInput = nil
         self.segmentsManager.deactivate()
         self.candidatesWindow.orderOut(nil)
         self.predictionWindow.orderOut(nil)
@@ -194,6 +199,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         self.pendingCorrectionTask?.cancel()
         self.pendingCorrectionTask = nil
         self.isAICorrectionInProgress = false
+        self.lastCorrectionInput = nil
         let text = self.commitText()
         if let client = sender as? IMKTextInput {
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -431,6 +437,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .removeLastMarkedText:
             self.pendingCorrectionTask?.cancel()
             self.pendingCorrectionTask = nil
+            self.lastCorrectionInput = nil
             self.segmentsManager.deleteBackwardFromCursorPosition()
             self.segmentsManager.requestResettingSelection()
         case .selectPrevCandidate:
@@ -785,6 +792,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
                 return String(cleanTarget).toKatakana() + trailing
             case .alphabet:
                 return self.segmentsManager.getRomanText()
+            case .off:
+                return nil
             }
         }()
 
@@ -849,12 +858,12 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         }
     }
 
-    /// Control+E でAIプリセット+組み込みモードをハイブリッドサイクルで循環切替する
-    /// サイクル: [AIプリセット0, AIプリセット1, ..., カタカナ, alphabet] → 先頭に戻る
+    /// Control+E でAIプリセット+組み込みモード+OFFをハイブリッドサイクルで循環切替する
+    /// サイクル: [AIプリセット0, AIプリセット1, ..., カタカナ, alphabet, OFF] → 先頭に戻る
     @MainActor
     func cycleAIPreset() {
         let presetsConfig = Config.AutoCorrectionPromptPresets().value
-        let builtInModes: [BuiltInConversionMode] = [.katakana, .alphabet]
+        let builtInModes: [BuiltInConversionMode] = [.katakana, .alphabet, .off]
         let totalCount = presetsConfig.presets.count + builtInModes.count
         NSLog("[azooKey] cycleAIPreset: presets=%d builtIn=%d total=%d", presetsConfig.presets.count, builtInModes.count, totalCount)
 
@@ -867,7 +876,6 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         // 現在位置を特定
         let currentIndex: Int
         if let builtIn = self.activeBuiltInMode {
-            // 組み込みモードがアクティブ
             if let idx = builtInModes.firstIndex(of: builtIn) {
                 currentIndex = presetsConfig.presets.count + idx
             } else {
@@ -885,6 +893,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         // 前回のAI校正タスクをキャンセル
         self.pendingCorrectionTask?.cancel()
         self.pendingCorrectionTask = nil
+        self.lastCorrectionInput = nil
         self.segmentsManager.setAICandidates([])
 
         if nextIndex < presetsConfig.presets.count {
@@ -902,7 +911,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             self.isAICorrectionInProgress = false
             self.requestImmediateAICorrection()
         } else {
-            // 組み込みモード
+            // 組み込みモード（カタカナ, alphabet, OFF）
             let builtInIndex = nextIndex - presetsConfig.presets.count
             let mode = builtInModes[builtInIndex]
             self.activeBuiltInMode = mode
