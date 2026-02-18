@@ -304,28 +304,21 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             }
         }
 
-        // Control+E: AIプリセット切替（変換中のみ。未変換時はアプリに通す）
+        // Control+E: 英語翻訳トグル / Control+,: 誤字修正トグル（変換中のみ）
         do {
             let cleanFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if event.keyCode == 14 {
-                NSLog("[azooKey] E key: isEmpty=%d ctrl=%d cmd=%d opt=%d shift=%d flags=0x%lx",
-                      self.segmentsManager.isEmpty ? 0 : 1,
-                      cleanFlags.contains(.control) ? 1 : 0,
-                      cleanFlags.contains(.command) ? 1 : 0,
-                      cleanFlags.contains(.option) ? 1 : 0,
-                      cleanFlags.contains(.shift) ? 1 : 0,
-                      cleanFlags.rawValue)
-            }
             if !self.segmentsManager.isEmpty,
-               event.keyCode == 14,  // E key
                cleanFlags.contains(.control),
                !cleanFlags.contains(.command),
                !cleanFlags.contains(.option),
                !cleanFlags.contains(.shift) {
-                NSLog("[azooKey] Ctrl+E: cycling preset")
-                self.segmentsManager.appendDebugMessage("Control+E 検出: プリセット切替")
-                self.cycleAIPreset()
-                return true
+                if event.keyCode == 14 {  // E key
+                    self.activateOrToggleAIPreset("英語翻訳")
+                    return true
+                } else if event.keyCode == 43 {  // Comma key
+                    self.activateOrToggleAIPreset("誤字修正")
+                    return true
+                }
             }
         }
 
@@ -858,37 +851,17 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         }
     }
 
-    /// Control+E でAIプリセット+組み込みモード+OFFをハイブリッドサイクルで循環切替する
-    /// サイクル: [AIプリセット0, AIプリセット1, ..., カタカナ, alphabet, OFF] → 先頭に戻る
+    /// 指定名のAIプリセットをトグル切替（有効→OFF / 無効→有効）
     @MainActor
-    func cycleAIPreset() {
+    func activateOrToggleAIPreset(_ presetName: String) {
         let presetsConfig = Config.AutoCorrectionPromptPresets().value
-        let builtInModes: [BuiltInConversionMode] = [.katakana, .alphabet, .off]
-        let totalCount = presetsConfig.presets.count + builtInModes.count
-        NSLog("[azooKey] cycleAIPreset: presets=%d builtIn=%d total=%d", presetsConfig.presets.count, builtInModes.count, totalCount)
 
-        guard totalCount > 1 else {
-            NSLog("[azooKey] cycleAIPreset: SKIP - only 1 entry")
-            self.segmentsManager.appendDebugMessage("モード切替: 切替不可（エントリが1つのみ）")
+        // 指定名のプリセットを検索
+        guard let preset = presetsConfig.presets.first(where: { $0.name == presetName }) else {
+            NSLog("[azooKey] activateOrToggleAIPreset: preset '%@' not found", presetName)
+            self.segmentsManager.appendDebugMessage("プリセット未登録: \(presetName)")
             return
         }
-
-        // 現在位置を特定
-        let currentIndex: Int
-        if let builtIn = self.activeBuiltInMode {
-            if let idx = builtInModes.firstIndex(of: builtIn) {
-                currentIndex = presetsConfig.presets.count + idx
-            } else {
-                currentIndex = presetsConfig.presets.count
-            }
-        } else if let activeId = presetsConfig.activePresetId,
-                  let idx = presetsConfig.presets.firstIndex(where: { $0.id == activeId }) {
-            currentIndex = idx
-        } else {
-            currentIndex = 0
-        }
-
-        let nextIndex = (currentIndex + 1) % totalCount
 
         // 前回のAI校正タスクをキャンセル
         self.pendingCorrectionTask?.cancel()
@@ -896,31 +869,28 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         self.lastCorrectionInput = nil
         self.segmentsManager.setAICandidates([])
 
-        if nextIndex < presetsConfig.presets.count {
-            // AIプリセット
+        // トグル判定: 現在同じプリセットがアクティブなら OFF に戻す
+        let isCurrentlyActive = self.activeBuiltInMode == nil
+            && presetsConfig.activePresetId == preset.id
+
+        if isCurrentlyActive {
+            // OFF に切替
+            self.activeBuiltInMode = .off
+            self.isAICorrectionInProgress = false
+            NSLog("[azooKey] activateOrToggleAIPreset: toggled OFF from '%@'", presetName)
+            self.segmentsManager.appendDebugMessage("モード切替: OFF（\(presetName) 解除）")
+            self.applyBuiltInConversion()
+        } else {
+            // プリセットを有効化
             self.activeBuiltInMode = nil
             self.segmentsManager.aiCandidatesFirst = false
             var updatedConfig = presetsConfig
-            updatedConfig.activePresetId = presetsConfig.presets[nextIndex].id
+            updatedConfig.activePresetId = preset.id
             Config.AutoCorrectionPromptPresets().value = updatedConfig
-
-            let presetName = presetsConfig.presets[nextIndex].name
-            NSLog("[azooKey] cycleAIPreset: switched to AI preset '%@' (index %d)", presetName, nextIndex)
+            self.isAICorrectionInProgress = false
+            NSLog("[azooKey] activateOrToggleAIPreset: activated '%@'", presetName)
             self.segmentsManager.appendDebugMessage("モード切替: AI: \(presetName)")
-
-            self.isAICorrectionInProgress = false
             self.requestImmediateAICorrection()
-        } else {
-            // 組み込みモード（カタカナ, alphabet, OFF）
-            let builtInIndex = nextIndex - presetsConfig.presets.count
-            let mode = builtInModes[builtInIndex]
-            self.activeBuiltInMode = mode
-            self.isAICorrectionInProgress = false
-
-            NSLog("[azooKey] cycleAIPreset: switched to built-in '%@'", mode.rawValue)
-            self.segmentsManager.appendDebugMessage("モード切替: \(mode.rawValue)")
-
-            self.applyBuiltInConversion()
         }
 
         self.refreshCandidateWindow()
