@@ -146,8 +146,8 @@ public enum UserAction {
                 return .function(.six)
             case ("k", [.control]): // Control + k
                 return .function(.seven)
-            case (";", [.control]): // Control + ;
-                return .function(.eight)
+            case (";", [.control]): // Control + ; → 半角英数（F10相当）
+                return .function(.ten)
             case (":", [.control]): // Control + :
                 return .function(.ten)
             case ("'", [.control]): // Control + '
