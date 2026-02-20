@@ -127,17 +127,18 @@ public enum InputState: Sendable, Hashable {
                     return (.enterFirstCandidatePreviewMode, .transition(.previewing))
                 }
             case let .function(function):
+                // mozc方式: 表示のみ更新してcomposingに留まる（Enterで確定）
                 switch function {
                 case .six:
-                    return (.submitHiraganaCandidate, .transition(.none))
+                    return (.submitHiraganaCandidate, .transition(.composing))
                 case .seven:
-                    return (.submitKatakanaCandidate, .transition(.none))
+                    return (.submitKatakanaCandidate, .transition(.composing))
                 case .eight:
-                    return (.submitHankakuKatakanaCandidate, .transition(.none))
+                    return (.submitHankakuKatakanaCandidate, .transition(.composing))
                 case .nine:
-                    return (.submitFullWidthRomanCandidate, .transition(.none))
+                    return (.submitFullWidthRomanCandidate, .transition(.composing))
                 case .ten:
-                    return (.submitHalfWidthRomanCandidate, .transition(.none))
+                    return (.submitHalfWidthRomanCandidate, .transition(.composing))
                 }
             case .forget:
                 return (.consume, .fallthrough)
@@ -190,17 +191,18 @@ public enum InputState: Sendable, Hashable {
             case .escape:
                 return (.hideCandidateWindow, .transition(.composing))
             case let .function(function):
+                // mozc方式: 表示のみ更新してcomposingに留まる（Enterで確定）
                 switch function {
                 case .six:
-                    return (.submitHiraganaCandidate, .transition(.none))
+                    return (.submitHiraganaCandidate, .transition(.composing))
                 case .seven:
-                    return (.submitKatakanaCandidate, .transition(.none))
+                    return (.submitKatakanaCandidate, .transition(.composing))
                 case .eight:
-                    return (.submitHankakuKatakanaCandidate, .transition(.none))
+                    return (.submitHankakuKatakanaCandidate, .transition(.composing))
                 case .nine:
-                    return (.submitFullWidthRomanCandidate, .transition(.none))
+                    return (.submitFullWidthRomanCandidate, .transition(.composing))
                 case .ten:
-                    return (.submitHalfWidthRomanCandidate, .transition(.none))
+                    return (.submitHalfWidthRomanCandidate, .transition(.composing))
                 }
             case .英数:
                 return (.selectInputLanguage(.english), .fallthrough)
@@ -275,17 +277,18 @@ public enum InputState: Sendable, Hashable {
                     return (.consume, .fallthrough)
                 }
             case let .function(function):
+                // mozc方式: 表示のみ更新してcomposingに留まる（Enterで確定）
                 switch function {
                 case .six:
-                    return (.submitHiraganaCandidate, .basedOnSubmitCandidate(ifIsEmpty: .none, ifIsNotEmpty: .selecting))
+                    return (.submitHiraganaCandidate, .transition(.composing))
                 case .seven:
-                    return (.submitKatakanaCandidate, .basedOnSubmitCandidate(ifIsEmpty: .none, ifIsNotEmpty: .selecting))
+                    return (.submitKatakanaCandidate, .transition(.composing))
                 case .eight:
-                    return (.submitHankakuKatakanaCandidate, .basedOnSubmitCandidate(ifIsEmpty: .none, ifIsNotEmpty: .selecting))
+                    return (.submitHankakuKatakanaCandidate, .transition(.composing))
                 case .nine:
-                    return (.submitFullWidthRomanCandidate, .basedOnSubmitCandidate(ifIsEmpty: .none, ifIsNotEmpty: .selecting))
+                    return (.submitFullWidthRomanCandidate, .transition(.composing))
                 case .ten:
-                    return (.submitHalfWidthRomanCandidate, .basedOnSubmitCandidate(ifIsEmpty: .none, ifIsNotEmpty: .selecting))
+                    return (.submitHalfWidthRomanCandidate, .transition(.composing))
                 }
             case .number(let num):
                 switch num {

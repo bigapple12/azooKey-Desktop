@@ -3,8 +3,12 @@ import Core
 import InputMethodKit
 import KanaKanjiConverterModuleWithDefaultDictionary
 
+
 enum BuiltInConversionMode: String {
+    case hiragana = "ひらがな"
     case katakana = "カタカナ"
+    case hankakuKatakana = "半角カタカナ"
+    case fullWidthRoman = "全角英数"
     case alphabet = "alphabet"
     case off = "OFF"
 }
@@ -52,13 +56,20 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             let convertTarget = self.segmentsManager.convertTarget
             let text: String
             switch mode {
+            case .hiragana:
+                text = convertTarget.toHiragana()
             case .katakana:
                 text = convertTarget.toKatakana()
+            case .hankakuKatakana:
+                text = convertTarget.toKatakana().applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? convertTarget
+            case .fullWidthRoman:
+                text = self.segmentsManager.getRomanText().applyingTransform(.fullwidthToHalfwidth, reverse: true) ?? self.segmentsManager.getRomanText()
             case .alphabet:
                 text = self.segmentsManager.getRomanText()
             case .off:
                 fatalError("unreachable")
             }
+            self.activeBuiltInMode = nil
             self.segmentsManager.stopComposition()
             return text
         }
@@ -442,25 +453,21 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             self.submitSelectedCandidate()
             self.segmentsManager.requestResettingSelection()
         case .submitHiraganaCandidate:
-            self.submitCandidate(self.segmentsManager.getModifiedRubyCandidate(inputState: self.inputState) {
-                $0.toHiragana()
-            })
+            // mozc方式: 表示のみ更新、Enterで確定（Ghostty対応）
+            self.activeBuiltInMode = .hiragana
+
         case .submitKatakanaCandidate:
-            self.submitCandidate(self.segmentsManager.getModifiedRubyCandidate(inputState: self.inputState) {
-                $0.toKatakana()
-            })
+            // mozc方式: 表示のみ更新、Enterで確定（Ghostty対応）
+            self.activeBuiltInMode = .katakana
         case .submitHankakuKatakanaCandidate:
-            self.submitCandidate(self.segmentsManager.getModifiedRubyCandidate(inputState: self.inputState) {
-                $0.toKatakana().applyingTransform(.fullwidthToHalfwidth, reverse: false)!
-            })
+            // mozc方式: 表示のみ更新、Enterで確定（Ghostty対応）
+            self.activeBuiltInMode = .hankakuKatakana
         case .submitFullWidthRomanCandidate:
-            self.submitCandidate(self.segmentsManager.getModifiedRomanCandidate {
-                $0.applyingTransform(.fullwidthToHalfwidth, reverse: true)!
-            })
+            // mozc方式: 表示のみ更新、Enterで確定（Ghostty対応）
+            self.activeBuiltInMode = .fullWidthRoman
         case .submitHalfWidthRomanCandidate:
-            self.submitCandidate(self.segmentsManager.getModifiedRomanCandidate {
-                $0.applyingTransform(.fullwidthToHalfwidth, reverse: false)!
-            })
+            // mozc方式: 表示のみ更新、Enterで確定（Ghostty対応）
+            self.activeBuiltInMode = .alphabet
         case .enableDebugWindow:
             self.segmentsManager.requestDebugWindowMode(enabled: true)
         case .disableDebugWindow:
@@ -779,10 +786,16 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             let convertTarget = self.segmentsManager.convertTarget
             guard !convertTarget.isEmpty else { return nil }
             switch mode {
+            case .hiragana:
+                return convertTarget.toHiragana()
             case .katakana:
                 let cleanTarget = convertTarget.prefix(while: { !$0.isASCII })
                 let trailing = String(convertTarget[cleanTarget.endIndex...])
                 return String(cleanTarget).toKatakana() + trailing
+            case .hankakuKatakana:
+                return convertTarget.toKatakana().applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? convertTarget
+            case .fullWidthRoman:
+                return self.segmentsManager.getRomanText().applyingTransform(.fullwidthToHalfwidth, reverse: true) ?? self.segmentsManager.getRomanText()
             case .alphabet:
                 return self.segmentsManager.getRomanText()
             case .off:
@@ -833,9 +846,10 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         if let client = self.client() {
             // インサートを行う前にコンテキストを取得する
             let cleanLeftSideContext = self.segmentsManager.getCleanLeftSideContext(maxCount: 30)
-            client.insertText(candidate.text, replacementRange: NSRange(location: NSNotFound, length: 0))
-            // アプリケーションサポートのディレクトリを準備しておく
+            // commitMarkedTextと同じ順序: 内部状態をクリアしてからinsertText
             self.segmentsManager.prefixCandidateCommited(candidate, leftSideContext: cleanLeftSideContext ?? "")
+            self.segmentsManager.stopComposition()
+            client.insertText(candidate.text, replacementRange: NSRange(location: NSNotFound, length: 0))
         }
     }
 
@@ -858,7 +872,6 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
 
         // 指定名のプリセットを検索
         guard let preset = presetsConfig.presets.first(where: { $0.name == presetName }) else {
-            NSLog("[azooKey] activateOrToggleAIPreset: preset '%@' not found", presetName)
             self.segmentsManager.appendDebugMessage("プリセット未登録: \(presetName)")
             return
         }
@@ -877,7 +890,6 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             // OFF に切替
             self.activeBuiltInMode = .off
             self.isAICorrectionInProgress = false
-            NSLog("[azooKey] activateOrToggleAIPreset: toggled OFF from '%@'", presetName)
             self.segmentsManager.appendDebugMessage("モード切替: OFF（\(presetName) 解除）")
             self.applyBuiltInConversion()
         } else {
@@ -888,7 +900,6 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             updatedConfig.activePresetId = preset.id
             Config.AutoCorrectionPromptPresets().value = updatedConfig
             self.isAICorrectionInProgress = false
-            NSLog("[azooKey] activateOrToggleAIPreset: activated '%@'", presetName)
             self.segmentsManager.appendDebugMessage("モード切替: AI: \(presetName)")
             self.requestImmediateAICorrection()
         }

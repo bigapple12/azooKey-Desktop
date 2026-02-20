@@ -15,6 +15,8 @@ extension azooKeyMacInputController {
 
         let candidates: [String]
         switch mode {
+        case .hiragana:
+            candidates = [convertTarget.toHiragana()]
         case .katakana:
             // 末尾に未確定のローマ字（ASCII文字）がある場合はその部分を除外して変換
             let cleanTarget = convertTarget.prefix(while: { !$0.isASCII })
@@ -23,6 +25,12 @@ extension azooKeyMacInputController {
                 return
             }
             candidates = [String(cleanTarget).toKatakana()]
+        case .hankakuKatakana:
+            let katakana = convertTarget.toKatakana()
+            candidates = [katakana.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? katakana]
+        case .fullWidthRoman:
+            let roman = self.segmentsManager.getRomanText()
+            candidates = [roman.applyingTransform(.fullwidthToHalfwidth, reverse: true) ?? roman]
         case .alphabet:
             candidates = self.generateAlphabetCandidates()
         case .off:
