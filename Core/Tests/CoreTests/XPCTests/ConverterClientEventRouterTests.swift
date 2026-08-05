@@ -83,3 +83,66 @@ private func disposition(
     #expect(disposition(event: event) == .fallthroughToApplication)
     #expect(disposition(event: event, state: .composing) == .sendToServer)
 }
+
+private func provisionalText(
+    event: KeyEventCore,
+    state: ConverterInputState = .none,
+    language: InputLanguage = .japanese
+) -> String? {
+    ConverterClientEventRouter.provisionalComposingText(
+        event: event,
+        context: .init(
+            acknowledgedInputState: state,
+            acknowledgedInputLanguage: language
+        )
+    )
+}
+
+@Test func provisionalComposingTextReturnsTypedCharacterForCompositionStart() {
+    let text = provisionalText(
+        event: KeyEventCore(
+            modifierFlags: [],
+            characters: "k",
+            charactersIgnoringModifiers: "k",
+            keyCode: 40
+        )
+    )
+    #expect(text == "k")
+}
+
+@Test func provisionalComposingTextIsNilForControlShortcut() {
+    // Ctrl+S (suggest) は composition を開始しないため暫定 marked text を置かない
+    let text = provisionalText(
+        event: KeyEventCore(
+            modifierFlags: [.control],
+            characters: "s",
+            charactersIgnoringModifiers: "s",
+            keyCode: 1
+        )
+    )
+    #expect(text == nil)
+}
+
+@Test func provisionalComposingTextIsNilForEnterKey() {
+    let text = provisionalText(
+        event: KeyEventCore(
+            modifierFlags: [],
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            keyCode: 36
+        )
+    )
+    #expect(text == nil)
+}
+
+@Test func provisionalComposingTextIsNilForCommandShortcut() {
+    let text = provisionalText(
+        event: KeyEventCore(
+            modifierFlags: [.command],
+            characters: "c",
+            charactersIgnoringModifiers: "c",
+            keyCode: 8
+        )
+    )
+    #expect(text == nil)
+}

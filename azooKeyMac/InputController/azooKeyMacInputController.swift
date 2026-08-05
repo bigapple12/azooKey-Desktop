@@ -344,20 +344,37 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         enableSuggestion: Bool,
         optionDirectInputText: String? = nil
     ) -> Bool {
-        let disposition = ConverterClientEventRouter.disposition(
-            event: event,
-            context: .init(
-                acknowledgedInputState: ConverterInputState(self.inputState),
-                acknowledgedInputLanguage: self.inputLanguage,
-                hasPendingKeyEvents: self.pendingKeyEventCount > 0,
-                liveConversionEnabled: Config.LiveConversion().value,
-                enableDebugWindow: Config.DebugWindow().value,
-                enableSuggestion: enableSuggestion,
-                typeBackSlash: Config.TypeBackSlash().value
-            )
+        let routingContext = ConverterClientEventRoutingContext(
+            acknowledgedInputState: ConverterInputState(self.inputState),
+            acknowledgedInputLanguage: self.inputLanguage,
+            hasPendingKeyEvents: self.pendingKeyEventCount > 0,
+            liveConversionEnabled: Config.LiveConversion().value,
+            enableDebugWindow: Config.DebugWindow().value,
+            enableSuggestion: enableSuggestion,
+            typeBackSlash: Config.TypeBackSlash().value
         )
+        let disposition = ConverterClientEventRouter.disposition(event: event, context: routingContext)
         guard disposition == .sendToServer else {
             return false
+        }
+
+        // Ghostty 等の一部クライアントは handle の戻り値ではなく、keyDown の処理中に
+        // setMarkedText が同期的に呼ばれたかどうかで IME がキーを消費したと判定する。
+        // preedit が空のまま応答待ちにすると composition 開始の 1 打鍵目が生の英字として
+        // application へ漏れるため、暫定の marked text を先に置く。
+        // 正しい表示は Server 応答後の refreshMarkedText が上書きする。
+        if !self.currentMarkedText().elements.contains(where: { !$0.content.isEmpty }),
+           let provisional = ConverterClientEventRouter.provisionalComposingText(event: event, context: routingContext),
+           let client = self.client() {
+            let underline = self.mark(
+                forStyle: kTSMHiliteConvertedText,
+                at: NSRange(location: NSNotFound, length: 0)
+            ) as? [NSAttributedString.Key: Any]
+            client.setMarkedText(
+                NSAttributedString(string: provisional, attributes: underline),
+                selectionRange: NSRange(location: (provisional as NSString).length, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
         }
 
         self.nextKeyEventID &+= 1

@@ -75,4 +75,56 @@ public enum ConverterClientEventRouter {
         }
         return .sendToServer
     }
+
+    /// `handle` が同期的に返る前に client へ置く暫定 marked text を返す。
+    ///
+    /// Ghostty 等の一部クライアントは `handle` の戻り値ではなく、keyDown の処理中に
+    /// `setMarkedText` / `insertText` が同期的に呼ばれたかどうかで IME がキーを
+    /// 消費したと判断する。marked text の反映は Server 応答後（非同期）のため、
+    /// preedit が空の状態から composition を開始する 1 打鍵目で、これらの
+    /// クライアントは生のキー入力を application 側へ流してしまう。
+    /// このメソッドは acknowledged 状態のミラーで「composition を開始/継続する
+    /// 入力」と判断できる場合に限り暫定文字列を返す。正しい表示は Server 応答後の
+    /// marked text 更新が上書きする。
+    public static func provisionalComposingText(
+        event: KeyEventCore,
+        context: ConverterClientEventRoutingContext
+    ) -> String? {
+        guard !event.modifierFlags.contains(.command) else {
+            return nil
+        }
+        let inputState = context.acknowledgedInputState.inputState
+        let userAction = UserAction.getUserAction(
+            eventCore: event,
+            inputLanguage: context.acknowledgedInputLanguage,
+            typeBackSlash: context.typeBackSlash
+        )
+        let (action, _) = inputState.event(
+            eventCore: event,
+            userAction: userAction,
+            inputLanguage: context.acknowledgedInputLanguage,
+            liveConversionEnabled: context.liveConversionEnabled,
+            enableDebugWindow: context.enableDebugWindow,
+            enableSuggestion: context.enableSuggestion
+        )
+        let text: String
+        switch action {
+        case .appendToMarkedText(let string):
+            text = string
+        case .appendPieceToMarkedText(let pieces):
+            text = String(pieces.compactMap { piece -> Character? in
+                switch piece {
+                case .character(let character):
+                    return character
+                case .key(let intention, let input, _):
+                    return intention ?? input
+                case .compositionSeparator:
+                    return nil
+                }
+            })
+        default:
+            return nil
+        }
+        return text.isEmpty ? nil : text
+    }
 }
