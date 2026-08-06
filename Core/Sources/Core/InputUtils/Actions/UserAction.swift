@@ -16,6 +16,8 @@ public enum UserAction {
     case number(Number)
     case editSegment(Int)
     case suggest
+    /// ざっと変換: composition 全体を LLM で自然な日本語に変換する
+    case zattoConvert
     case forget
     case transformSelectedText
     case deadKey(String)
@@ -148,8 +150,8 @@ public enum UserAction {
                 return .editSegment(1)  // Shift segment cursor right
             case ("l", [.control]): // Control + l
                 return .function(.nine)
-            case ("j", [.control]): // Control + j
-                return .function(.six)
+            case ("j", [.control]): // Control + j（ざっと変換。ひらがな変換は F6 で）
+                return .zattoConvert
             case ("k", [.control]): // Control + k
                 return .function(.seven)
             case (";", [.control]): // Control + ;

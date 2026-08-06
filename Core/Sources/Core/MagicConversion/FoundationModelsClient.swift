@@ -127,7 +127,7 @@ public enum FoundationModelsClient {
         let session = LanguageModelSession(model: systemModel)
 
         // Build prompt - simplified since we use @Generable for structured output
-        let promptText = """
+        let promptText = request.promptOverride ?? """
         \(Prompt.getPromptText(for: request.target))
 
         Input: `\(request.prompt)<\(request.target)>`

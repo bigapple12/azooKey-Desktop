@@ -53,6 +53,8 @@ public enum ClientAction {
 
     // ReplaceSuggestion
     case requestReplaceSuggestion
+    /// ざっと変換: composition 全体を LLM で変換し、結果を置換候補として提示する
+    case requestZattoConversion
     case selectNextReplaceSuggestionCandidate
     case selectPrevReplaceSuggestionCandidate
     case submitReplaceSuggestionCandidate

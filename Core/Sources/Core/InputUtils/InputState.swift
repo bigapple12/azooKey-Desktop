@@ -96,7 +96,7 @@ public enum InputState: Sendable, Hashable {
                 }
             case .startUnicodeInput:
                 return (.enterUnicodeInputMode, .transition(.unicodeInput("")))
-            case .unknown, .navigation, .backspace, .enter, .escape, .function, .editSegment, .tab, .forget, .transformSelectedText:
+            case .unknown, .navigation, .backspace, .enter, .escape, .function, .editSegment, .tab, .forget, .transformSelectedText, .zattoConvert:
                 return (.fallthrough, .fallthrough)
             }
         case .attachDiacritic(let diacritic):
@@ -124,7 +124,7 @@ public enum InputState: Sendable, Hashable {
                 return (.insertWithoutMarkedText(diacritic + "\t"), .transition(.none))
             case .startUnicodeInput:
                 return (.insertWithoutMarkedText(diacritic), .transition(.unicodeInput("")))
-            case .unknown, .space, .英数, .navigation, .editSegment, .suggest, .forget, .transformSelectedText:
+            case .unknown, .space, .英数, .navigation, .editSegment, .suggest, .forget, .transformSelectedText, .zattoConvert:
                 return (.insertWithoutMarkedText(diacritic), .transition(.none))
             }
         case .composing:
@@ -199,6 +199,12 @@ public enum InputState: Sendable, Hashable {
                 } else {
                     return (.fallthrough, .fallthrough)
                 }
+            case .zattoConvert:
+                if enableSuggestion {
+                    return (.requestZattoConversion, .transition(.replaceSuggestion))
+                } else {
+                    return (.fallthrough, .fallthrough)
+                }
             case .startUnicodeInput:
                 return (.commitMarkedText, .transition(.unicodeInput("")))
             case .unknown, .transformSelectedText, .deadKey:
@@ -256,7 +262,7 @@ public enum InputState: Sendable, Hashable {
                 return (.editSegment(count), .transition(.selecting))
             case .startUnicodeInput:
                 return (.commitMarkedText, .transition(.unicodeInput("")))
-            case .unknown, .suggest, .transformSelectedText, .deadKey:
+            case .unknown, .suggest, .zattoConvert, .transformSelectedText, .deadKey:
                 return (.fallthrough, .fallthrough)
             }
         case .selecting:
@@ -341,7 +347,7 @@ public enum InputState: Sendable, Hashable {
                 return (.consume, .fallthrough)
             case .startUnicodeInput:
                 return (.submitSelectedCandidateAndEnterUnicodeInputMode, .transition(.unicodeInput("")))
-            case .unknown, .suggest, .transformSelectedText, .deadKey:
+            case .unknown, .suggest, .zattoConvert, .transformSelectedText, .deadKey:
                 return (.fallthrough, .fallthrough)
             }
         case .replaceSuggestion:
@@ -361,6 +367,8 @@ public enum InputState: Sendable, Hashable {
                 }
             case .suggest:
                 return (.requestReplaceSuggestion, .fallthrough)
+            case .zattoConvert:
+                return (.requestZattoConversion, .fallthrough)
             case .enter:
                 return (.submitReplaceSuggestionCandidate, .transition(.none))
             case .backspace, .escape:
@@ -406,7 +414,7 @@ public enum InputState: Sendable, Hashable {
                 }
             case .escape:
                 return (.cancelUnicodeInput, .transition(.none))
-            case .英数, .かな, .tab, .forget, .function, .navigation, .editSegment, .suggest, .transformSelectedText, .deadKey, .startUnicodeInput, .unknown:
+            case .英数, .かな, .tab, .forget, .function, .navigation, .editSegment, .suggest, .zattoConvert, .transformSelectedText, .deadKey, .startUnicodeInput, .unknown:
                 return (.consume, .fallthrough)
             }
         }

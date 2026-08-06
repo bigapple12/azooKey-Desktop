@@ -186,27 +186,44 @@ struct Prompt {
 // - methods:
 //    - toJSON(): リクエストをOpenAI APIに適したJSON形式に変換する。
 public struct OpenAIRequest {
-    public init(prompt: String, target: String, modelName: String) {
+    public init(prompt: String, target: String, modelName: String, promptOverride: String? = nil) {
         self.prompt = prompt
         self.target = target
         self.modelName = modelName
+        self.promptOverride = promptOverride
     }
 
     let prompt: String
     let target: String
     let modelName: String
+    /// 設定時は `Prompt` の辞書分岐を通さず、この文字列をそのまま user プロンプトとして使う。
+    /// `target` 自体がプロンプト選択キーになる既存方式は、任意の読みを変換する
+    /// ざっと変換では誤ヒットするため、専用プロンプトはこちらで渡す。
+    let promptOverride: String?
+
+    var userPromptText: String {
+        promptOverride ?? """
+            \(Prompt.getPromptText(for: target))
+
+            `\(prompt)<\(target)>`
+            """
+    }
+
+    var systemPromptText: String {
+        if promptOverride != nil {
+            "You are a conversion engine of a Japanese input method."
+        } else {
+            "You are an assistant that predicts the continuation of short text."
+        }
+    }
 
     // リクエストをJSON形式に変換する関数
     func toJSON() -> [String: Any] {
         [
             "model": modelName,
             "messages": [
-                ["role": "system", "content": "You are an assistant that predicts the continuation of short text."],
-                ["role": "user", "content": """
-                    \(Prompt.getPromptText(for: target))
-
-                    `\(prompt)<\(target)>`
-                    """]
+                ["role": "system", "content": systemPromptText],
+                ["role": "user", "content": userPromptText]
             ],
             "response_format": [
                 "type": "json_schema",

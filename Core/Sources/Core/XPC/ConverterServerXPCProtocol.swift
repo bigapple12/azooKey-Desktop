@@ -135,6 +135,10 @@ public enum ConverterReplaceSuggestionCommand: Codable, Sendable {
     /// 現在の composition に対する置換候補を生成する。
     case request(context: ConverterTextContext)
 
+    /// ざっと変換: composition 全体（読み）を LLM で自然な日本語に変換し、
+    /// 結果を置換候補として保持する。
+    case requestZatto(context: ConverterTextContext)
+
     /// 置換候補ウィンドウで指定行を選択する。
     case selectReplaceSuggestionCandidate(index: Int)
 
@@ -380,6 +384,9 @@ public enum ConverterClientEffect: Codable, Sendable, Equatable {
     case switchInputLanguage(InputLanguage)
     case requestPredictiveSuggestion
     case requestReplaceSuggestion
+    /// ざっと変換の LLM 要求を Client に依頼する。Client はキーイベントの
+    /// 直列キューを塞がないよう out-of-band 経路で Server へ送り返す。
+    case requestZattoConversion
     case selectNextReplaceSuggestionCandidate
     case selectPreviousReplaceSuggestionCandidate
     case submitReplaceSuggestionCandidate

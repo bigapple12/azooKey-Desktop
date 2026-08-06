@@ -220,6 +220,16 @@ final class ConverterServer: NSObject, ConverterServerXPCProtocol, @unchecked Se
             try await requestReplaceSuggestion(session: session)
             session.inputState = .replaceSuggestion
             return makeResponse(for: session, inputState: session.inputState, responseInputState: .replaceSuggestion)
+        case .requestZatto(let context):
+            session.setContext(context)
+            try await requestZattoConversion(session: session)
+            // out-of-band 要求のため、応答待ちの間にキーイベントで InputState が
+            // 進んでいる可能性がある。状態は上書きせず現在値をそのまま返す
+            return makeResponse(
+                for: session,
+                inputState: session.inputState,
+                responseInputState: ConverterInputState(session.inputState)
+            )
         case .selectReplaceSuggestionCandidate(let index):
             session.selectReplaceSuggestion(at: index)
             session.inputState = .replaceSuggestion

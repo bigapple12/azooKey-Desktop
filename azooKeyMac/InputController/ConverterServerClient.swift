@@ -162,6 +162,26 @@ final class ConverterServerClient {
         enqueue(commandBuilder, retriesOnFailure: false, completion: completion)
     }
 
+    /// 直列キュー（OrderedAsyncCommandQueue）をバイパスしてコマンドを送る。
+    ///
+    /// LLM 呼び出しのような遅い命令をキーイベントと同じ直列キューに乗せると、
+    /// 応答が返るまで後続のタイプや Esc が一切処理されなくなる。この経路は
+    /// キューを通さず直接送信するため、応答待ちの間もキーイベントが流れ続ける。
+    /// 順序保証がないため、呼び出し側は応答適用時に stale チェックを行うこと。
+    func sendOutOfBand(
+        _ commandBuilder: @escaping (String) -> ConverterSessionCommand,
+        completion: @escaping (ConverterServerResponse?) -> Void
+    ) {
+        guard let sessionID else {
+            completion(nil)
+            return
+        }
+        sendResolved(
+            .session(sessionID: sessionID, command: commandBuilder(sessionID)),
+            completion: completion
+        )
+    }
+
     private func enqueue(
         _ commandBuilder: @escaping (String) -> ConverterSessionCommand,
         retriesOnFailure: Bool,

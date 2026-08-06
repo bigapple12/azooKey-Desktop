@@ -201,6 +201,9 @@ extension ConverterServer {
         case .requestReplaceSuggestion:
             session.clearReplaceSuggestions()
             effects.append(.requestReplaceSuggestion)
+        case .requestZattoConversion:
+            session.clearReplaceSuggestions()
+            effects.append(.requestZattoConversion)
         case .selectNextReplaceSuggestionCandidate:
             session.selectNextReplaceSuggestion()
         case .selectPrevReplaceSuggestionCandidate:

@@ -474,6 +474,21 @@ public final class SegmentsManager {
         self.composingText.convertTarget
     }
 
+    /// composition の生入力（かな変換前の打鍵列）。
+    /// ローマ字→かなテーブルで壊れる英単語や打ち間違いの原型を LLM に渡すために使う。
+    public var rawInputText: String {
+        String(self.composingText.input.compactMap { element -> Character? in
+            switch element.piece {
+            case .character(let character):
+                return character
+            case .key(let intention, let input, _):
+                return intention ?? input
+            case .compositionSeparator:
+                return nil
+            }
+        })
+    }
+
     public var isEmpty: Bool {
         self.composingText.isEmpty
     }

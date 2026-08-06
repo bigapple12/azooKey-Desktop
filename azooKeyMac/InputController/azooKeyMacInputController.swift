@@ -461,6 +461,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             self.requestReplaceSuggestion()
         case .requestReplaceSuggestion:
             self.requestReplaceSuggestion()
+        case .requestZattoConversion:
+            self.requestZattoConversion()
         case .selectNextReplaceSuggestionCandidate:
             self.selectReplaceSuggestionCandidate(offset: 1)
         case .selectPreviousReplaceSuggestionCandidate:
@@ -929,6 +931,55 @@ extension azooKeyMacInputController {
             }
         )
         self.appendDebugMessage("requestReplaceSuggestion: 終了")
+    }
+
+    // MARK: - Zatto Conversion Request Handling
+    /// ざっと変換: composition 全体を LLM で変換し、置換候補として提示する。
+    ///
+    /// LLM 応答は数秒かかりうるため、キーイベントの直列キューを塞がない
+    /// out-of-band 経路で送る。応答待ちの間もタイプ・Esc は通常どおり処理される。
+    /// そのため応答適用時に「composition が変わっていないか」
+    /// 「まだ replaceSuggestion 状態か」の 2 つの stale チェックを行う。
+    @MainActor func requestZattoConversion() {
+        self.appendDebugMessage("requestZattoConversion: 開始")
+
+        // リクエスト開始時に前回の候補をクリアし、ウィンドウを非表示にする
+        self.replaceSuggestionsViewController.updateCandidatePresentations([], selectionIndex: nil, cursorLocation: .zero)
+        self.replaceSuggestionWindow.setIsVisible(false)
+        self.replaceSuggestionWindow.orderOut(nil)
+
+        guard let currentConverterView, !currentConverterView.isEmpty else {
+            self.appendDebugMessage("requestZattoConversion: skipped because converter server composition is empty")
+            return
+        }
+        self.syncConverterServerSessionConfig()
+        self.converterServerClient.sendOutOfBand(
+            { _ in .replaceSuggestion(.requestZatto(context: self.currentConverterTextContext())) },
+            completion: { [weak self] response in
+                Task { @MainActor in
+                    guard let self else {
+                        return
+                    }
+                    guard let response else {
+                        self.showReplaceSuggestionError(message: "ConverterServerから候補を取得できませんでした")
+                        return
+                    }
+                    guard self.currentConverterView?.convertTarget == response.snapshot.convertTarget else {
+                        self.appendDebugMessage("requestZattoConversion: skipped because composition changed")
+                        return
+                    }
+                    guard case .replaceSuggestion = self.inputState else {
+                        self.appendDebugMessage("requestZattoConversion: skipped because input state left replaceSuggestion")
+                        return
+                    }
+                    self.currentConverterView = response.snapshot
+                    self.inputState = response.inputState.inputState
+                    self.refreshMarkedText()
+                    self.refreshReplaceSuggestionWindow()
+                }
+            }
+        )
+        self.appendDebugMessage("requestZattoConversion: 終了")
     }
 
     // MARK: - Window Management

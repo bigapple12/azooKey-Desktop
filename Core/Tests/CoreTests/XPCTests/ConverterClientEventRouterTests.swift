@@ -84,6 +84,36 @@ private func disposition(
     #expect(disposition(event: event, state: .composing) == .sendToServer)
 }
 
+@Test func zattoConvertFallsThroughWhenSuggestionDisabled() {
+    // Ctrl+J（ざっと変換）は AI バックエンド無効時・未入力時はアプリへ素通り
+    let event = KeyEventCore(
+        modifierFlags: [.control],
+        characters: "j",
+        charactersIgnoringModifiers: "j",
+        keyCode: 38
+    )
+
+    #expect(disposition(event: event) == .fallthroughToApplication)
+    #expect(disposition(event: event, state: .composing) == .fallthroughToApplication)
+}
+
+@Test func zattoConvertIsSentToServerWhenSuggestionEnabled() {
+    let event = KeyEventCore(
+        modifierFlags: [.control],
+        characters: "j",
+        charactersIgnoringModifiers: "j",
+        keyCode: 38
+    )
+    let disposition = ConverterClientEventRouter.disposition(
+        event: event,
+        context: .init(
+            acknowledgedInputState: .composing,
+            enableSuggestion: true
+        )
+    )
+    #expect(disposition == .sendToServer)
+}
+
 private func provisionalText(
     event: KeyEventCore,
     state: ConverterInputState = .none,
