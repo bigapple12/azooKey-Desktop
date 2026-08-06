@@ -489,6 +489,21 @@ public final class SegmentsManager {
         })
     }
 
+    /// composition の物理打鍵列。`rawInputText` と違い intention（`.`→`。` 等の日本語解釈）を
+    /// 無視して打鍵された文字そのものを返す。Shift 英字入力の判定・表示に使う。
+    public var rawKeyText: String {
+        String(self.composingText.input.compactMap { element -> Character? in
+            switch element.piece {
+            case .character(let character):
+                return character
+            case .key(_, let input, _):
+                return input
+            case .compositionSeparator:
+                return nil
+            }
+        })
+    }
+
     public var isEmpty: Bool {
         self.composingText.isEmpty
     }
@@ -577,7 +592,7 @@ public final class SegmentsManager {
 
         let leftSideContext = forcedLeftSideContext ?? self.getCleanLeftSideContext(maxCount: ContextLength.conversion)
         let rightSideContext = forcedRightSideContext ?? self.getCleanRightSideContext(maxCount: ContextLength.conversion)
-        let result = self.kanaKanjiConverter.requestCandidates(
+        var result = self.kanaKanjiConverter.requestCandidates(
             self.composingText,
             options: options(
                 leftSideContext: leftSideContext,
@@ -587,6 +602,14 @@ public final class SegmentsManager {
                 requireEnglishPrediction: Config.DebugPredictiveTyping().value ? .manualMix : .disabled
             )
         )
+        // Shift 大文字で英字入力を始めた場合、生入力から合成した小文字英字候補を第一候補に挿入する
+        result.mainResults = ShiftEnglishCandidateAdjuster.adjustWholeCandidates(
+            candidates: result.mainResults,
+            convertTarget: self.composingText.convertTarget,
+            rawInput: self.rawKeyText,
+            composingInputCount: self.composingText.input.count
+        )
+        result.firstClauseResults = ShiftEnglishCandidateAdjuster.adjust(candidates: result.firstClauseResults, convertTarget: self.composingText.convertTarget)
         self.rawCandidates = result
     }
 
@@ -1071,7 +1094,10 @@ public final class SegmentsManager {
         case .none, .attachDiacritic:
             return MarkedText(text: [], selectionRange: .notFound)
         case .composing:
-            let text = if self.lastOperation == .delete {
+            let text = if let englishText = ShiftEnglishCandidateAdjuster.directEnglishText(rawInput: self.rawKeyText) {
+                // Shift 大文字で英字入力を始めた場合は、小文字化した打鍵列をそのまま表示・確定する
+                englishText
+            } else if self.lastOperation == .delete {
                 // 削除のあとは常にひらがなを示す
                 self.composingText.convertTarget
             } else if self.liveConversionEnabled,

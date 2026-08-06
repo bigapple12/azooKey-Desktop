@@ -139,8 +139,8 @@ private func makeControlEvent(
         ),
         inputLanguage: .japanese
     )
-    guard case .function(.six) = controlJ else {
-        Issue.record("Expected Ctrl+J to be function(.six), got \(controlJ)")
+    guard case .zattoConvert = controlJ else {
+        Issue.record("Expected Ctrl+J to be zattoConvert, got \(controlJ)")
         return
     }
 
